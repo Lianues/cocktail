@@ -1,0 +1,184 @@
+/* st-cocktail
+ * - bundle styles from:
+ *   - st-chat-render-optimizer
+ *   - st-regex-refresh-optimizer
+ *   - st-startup-optimizer
+ */
+
+.st-cocktail-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 6px 0;
+}
+
+.st-cocktail-intro {
+  opacity: 0.9;
+  font-size: 0.95em;
+  line-height: 1.35;
+}
+
+.st-cocktail-intro .st-cocktail-sub {
+  opacity: 0.85;
+  font-size: 0.9em;
+}
+
+/* -------------------------------------------------------------------------- */
+/* 鸡尾酒统一表单控件（对齐“首屏渲染条数”样式） */
+/* -------------------------------------------------------------------------- */
+
+#st-cocktail-settings-root input[type="number"],
+#st-cocktail-settings-root select {
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--SmartThemeBorderColor);
+  background: rgba(255, 255, 255, 0.05);
+  color: inherit;
+  box-sizing: border-box;
+}
+
+#st-cocktail-settings-root input[type="number"] {
+  width: 90px;
+}
+
+/* Keep buttons horizontal (some themes may rotate text) */
+#st-cocktail-settings-root .menu_button {
+  white-space: nowrap;
+  word-break: keep-all;
+  writing-mode: horizontal-tb;
+}
+
+/* Give nested drawers a bit of spacing */
+#st-cocktail-subpanels .inline-drawer {
+  margin-top: 8px;
+}
+#st-cocktail-subpanels .inline-drawer:first-child {
+  margin-top: 0;
+}
+
+/* -------------------------------------------------------------------------- */
+/* st-chat-render-optimizer */
+/* -------------------------------------------------------------------------- */
+
+.st-cro-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 6px 0;
+}
+
+.st-cro-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.st-cro-row label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.st-cro-help {
+  opacity: 0.85;
+  font-size: 0.9em;
+  line-height: 1.35;
+}
+
+/* Hide code blocks (show placeholder) */
+body.st-cro-hide-code #chat .mes_text pre {
+  overflow: hidden;
+}
+
+body.st-cro-hide-code #chat .mes_text pre code {
+  display: none !important;
+}
+
+body.st-cro-hide-code #chat .mes_text pre .code-copy {
+  display: none !important;
+}
+
+body.st-cro-hide-code #chat .mes_text pre::before {
+  content: "⟦…⟧";
+  display: inline-block;
+  opacity: 0.75;
+  font-size: 0.9em;
+}
+
+/* Optional: Chromium/Electron only. Disabled by default, controlled by body class. */
+body.st-cro-cv #chat .mes {
+  content-visibility: auto;
+  contain-intrinsic-size: 1px 400px;
+}
+
+/* Ensure native scroll anchoring is enabled for prepend (default is auto, but make it explicit). */
+#chat {
+  overflow-anchor: auto;
+}
+
+/* -------------------------------------------------------------------------- */
+/* st-regex-refresh-optimizer */
+/* -------------------------------------------------------------------------- */
+
+.st-rro-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.st-rro-row {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.st-rro-row label {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.st-rro-help {
+  opacity: 0.85;
+  font-size: 0.95em;
+}
+
+/* -------------------------------------------------------------------------- */
+/* st-startup-optimizer */
+/* -------------------------------------------------------------------------- */
+
+.st-startup-optimizer-badge {
+  position: fixed;
+  right: 12px;
+  bottom: 12px;
+  z-index: 2147483646;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.65);
+  color: #fff;
+  font-size: 12px;
+  line-height: 1.25;
+  pointer-events: none;
+  max-width: min(420px, 60vw);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+
+.st-startup-optimizer-badge[data-state="done"] {
+  background: rgba(0, 128, 0, 0.65);
+}
+
+.st-startup-optimizer-badge[data-state="error"] {
+  background: rgba(160, 0, 0, 0.7);
+}
+
+.st-startup-optimizer-badge .stso-sub {
+  opacity: 0.85;
+  margin-left: 6px;
+}
+

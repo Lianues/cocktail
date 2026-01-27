@@ -1,0 +1,11 @@
+{
+  "display_name": "鸡尾酒",
+  "loading_order": 0,
+  "requires": [],
+  "optional": [],
+  "js": "index.js",
+  "css": "style.css",
+  "author": "Limerence",
+  "version": "0.1.0"
+}
+
