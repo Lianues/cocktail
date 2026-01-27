@@ -48,6 +48,38 @@
   writing-mode: horizontal-tb;
 }
 
+/* -------------------------------------------------------------------------- */
+/* 鸡尾酒面板背景（避免透明无色） */
+/* -------------------------------------------------------------------------- */
+
+/* 子面板在 #st-cocktail-subpanels 内，不会命中酒馆对 #extensions_settings 的默认 header 样式；
+   这里补齐一份同风格的 header，并给内容区加背景色。 */
+.st-cocktail-panel-wrapper .inline-drawer-toggle.inline-drawer-header {
+  background-image: linear-gradient(
+    348deg,
+    var(--white30a) 2%,
+    var(--grey30a) 10%,
+    var(--black70a) 95%,
+    var(--SmartThemeQuoteColor) 100%
+  );
+  margin-bottom: 5px;
+  border-radius: 10px;
+  padding: 2px 5px;
+  border: 1px solid var(--SmartThemeBorderColor);
+  transition: all var(--animation-duration-2x);
+}
+
+.st-cocktail-panel-wrapper .inline-drawer-toggle.inline-drawer-header:hover {
+  filter: brightness(150%);
+}
+
+.st-cocktail-panel-wrapper .inline-drawer-content {
+  border: 1px solid var(--SmartThemeBorderColor);
+  border-radius: 10px;
+  padding: 10px;
+  background-color: var(--SmartThemeBlurTintColor);
+}
+
 /* Give nested drawers a bit of spacing */
 #st-cocktail-subpanels .inline-drawer {
   margin-top: 8px;
