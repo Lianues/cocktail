@@ -51,6 +51,7 @@
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  flex-wrap: wrap;
   padding: 10px 12px;
   border: 0;
   border-bottom: 1px solid var(--SmartThemeBorderColor);
@@ -67,6 +68,8 @@
 #cocktail_settings_root .cocktail-subpanel-title {
   font-weight: 700;
   font-size: 13px;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 #cocktail_settings_root .cocktail-subpanel-indicator {
@@ -92,38 +95,60 @@
   gap: 10px 14px;
 }
 
-@media (max-width: 720px) {
-  #cocktail_settings_root .cocktail-grid {
-    grid-template-columns: 1fr;
-  }
+#cocktail_settings_root .cocktail-grid {
+  /* Allow the grid to adapt to narrow side-panels without relying on viewport width */
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  min-width: 0;
 }
 
 #cocktail_settings_root .cocktail-check {
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 #cocktail_settings_root .cocktail-field {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
   gap: 10px;
+  flex-wrap: wrap;
+  min-width: 0;
 }
 
 #cocktail_settings_root .cocktail-label {
   opacity: 0.9;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 #cocktail_settings_root input[type="number"],
 #cocktail_settings_root select {
-  width: 140px;
+  width: min(140px, 100%);
+  max-width: 100%;
   padding: 6px 8px;
   border-radius: 8px;
   border: 1px solid var(--SmartThemeBorderColor);
   background: rgba(255, 255, 255, 0.06);
   color: inherit;
   box-sizing: border-box;
+}
+
+/* Keep the control aligned to the right when on the same row */
+#cocktail_settings_root .cocktail-field > input[type="number"],
+#cocktail_settings_root .cocktail-field > select {
+  margin-left: auto;
+  flex: 0 1 140px;
+}
+
+@media (max-width: 720px) {
+  /* Fallback for older browsers without container-aware layout */
+  #cocktail_settings_root .cocktail-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 #cocktail_settings_root .cocktail-actions {

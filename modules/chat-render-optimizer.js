@@ -23,6 +23,13 @@ const DEFAULT_SETTINGS = Object.freeze({
   autoLoadMore: true,
   autoLoadThresholdPx: 400,
   autoLoadCooldownMs: 250,
+  // Swipe guard: avoid accidental swipe branch switching while vertical scrolling on mobile.
+  swipeGuardEnabled: true,
+  swipeGuardMinDxPx: 60,
+  swipeGuardDxDyRatio: 1.8,
+  swipeGuardScrollBlockMs: 180,
+  swipeGuardNearBottomPx: 120,
+  swipeGuardRequireLastMes: true,
 });
 
 // Avoid double-install (some reload flows can evaluate modules twice)
@@ -54,6 +61,19 @@ let _touchStartY = null;
 
 let _codeBlockClickToExpandInstalled = false;
 
+let _swipeGuardInstalled = false;
+let _swipeGuardChatEl = null;
+let _swipeGuardEnabled = DEFAULT_SETTINGS.swipeGuardEnabled;
+let _swipeGuardMinDxPx = DEFAULT_SETTINGS.swipeGuardMinDxPx;
+let _swipeGuardDxDyRatio = DEFAULT_SETTINGS.swipeGuardDxDyRatio;
+let _swipeGuardScrollBlockMs = DEFAULT_SETTINGS.swipeGuardScrollBlockMs;
+let _swipeGuardNearBottomPx = DEFAULT_SETTINGS.swipeGuardNearBottomPx;
+let _swipeGuardRequireLastMes = DEFAULT_SETTINGS.swipeGuardRequireLastMes;
+let _swipeGuardLastChatScrollTs = 0;
+let _swipeGuardLastChatScrollTop = null;
+let _swipeGuardLastChatScrollDeltaPx = 0;
+let _swipeGuardPrevChatAttrs = null;
+
 function clampInt(value, min, max, fallback) {
   const n = Number(value);
   if (!Number.isFinite(n)) return fallback;
@@ -61,6 +81,14 @@ function clampInt(value, min, max, fallback) {
   if (i < min) return min;
   if (i > max) return max;
   return i;
+}
+
+function clampFloat(value, min, max, fallback) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  if (n < min) return min;
+  if (n > max) return max;
+  return n;
 }
 
 function getCtx() {
@@ -85,6 +113,14 @@ function ensureExtensionSettings(ctx) {
   s.autoLoadMore = Boolean(s.autoLoadMore);
   s.autoLoadThresholdPx = clampInt(s.autoLoadThresholdPx, 0, 10000, DEFAULT_SETTINGS.autoLoadThresholdPx);
   s.autoLoadCooldownMs = clampInt(s.autoLoadCooldownMs, 0, 10000, DEFAULT_SETTINGS.autoLoadCooldownMs);
+
+  // Swipe guard
+  s.swipeGuardEnabled = Boolean(s.swipeGuardEnabled);
+  s.swipeGuardMinDxPx = clampInt(s.swipeGuardMinDxPx, 20, 500, DEFAULT_SETTINGS.swipeGuardMinDxPx);
+  s.swipeGuardDxDyRatio = clampFloat(s.swipeGuardDxDyRatio, 1, 10, DEFAULT_SETTINGS.swipeGuardDxDyRatio);
+  s.swipeGuardScrollBlockMs = clampInt(s.swipeGuardScrollBlockMs, 0, 5000, DEFAULT_SETTINGS.swipeGuardScrollBlockMs);
+  s.swipeGuardNearBottomPx = clampInt(s.swipeGuardNearBottomPx, 0, 10000, DEFAULT_SETTINGS.swipeGuardNearBottomPx);
+  s.swipeGuardRequireLastMes = Boolean(s.swipeGuardRequireLastMes);
 
   return s;
 }
@@ -337,6 +373,151 @@ function installTopIntentLoadMore(ctx) {
   _topIntentInstalled = true;
 }
 
+function applySwipeGuardDataAttributes(chatEl) {
+  if (!(chatEl instanceof HTMLElement)) return;
+
+  // Snapshot previous values once so we can restore on disable.
+  if (!_swipeGuardPrevChatAttrs) {
+    _swipeGuardPrevChatAttrs = {
+      threshold: chatEl.getAttribute('data-swipe-threshold'),
+      unit: chatEl.getAttribute('data-swipe-unit'),
+      timeout: chatEl.getAttribute('data-swipe-timeout'),
+    };
+  }
+
+  if (!_swipeGuardEnabled) {
+    const prev = _swipeGuardPrevChatAttrs;
+    if (prev) {
+      if (prev.threshold === null) chatEl.removeAttribute('data-swipe-threshold'); else chatEl.setAttribute('data-swipe-threshold', prev.threshold);
+      if (prev.unit === null) chatEl.removeAttribute('data-swipe-unit'); else chatEl.setAttribute('data-swipe-unit', prev.unit);
+      if (prev.timeout === null) chatEl.removeAttribute('data-swipe-timeout'); else chatEl.setAttribute('data-swipe-timeout', prev.timeout);
+    }
+    return;
+  }
+
+  // Increase threshold so swiped-events.js won't emit swiped-left/right on small jitter.
+  const threshold = clampInt(_swipeGuardMinDxPx, 20, 500, DEFAULT_SETTINGS.swipeGuardMinDxPx);
+  chatEl.setAttribute('data-swipe-threshold', String(threshold));
+  chatEl.setAttribute('data-swipe-unit', 'px');
+  // Keep default timeout unless you really want to change it.
+  chatEl.setAttribute('data-swipe-timeout', '500');
+}
+
+function ensureSwipeGuardChatEl() {
+  const chatEl = document.getElementById('chat');
+  if (!(chatEl instanceof HTMLElement)) return null;
+
+  if (_swipeGuardChatEl !== chatEl) {
+    _swipeGuardChatEl = chatEl;
+
+    // Track scroll activity to distinguish vertical scrolling from intentional horizontal swipes.
+    chatEl.addEventListener('scroll', () => {
+      const now = performance.now();
+      const st = chatEl.scrollTop;
+      if (typeof _swipeGuardLastChatScrollTop === 'number') {
+        _swipeGuardLastChatScrollDeltaPx = Math.abs(st - _swipeGuardLastChatScrollTop);
+      } else {
+        _swipeGuardLastChatScrollDeltaPx = 0;
+      }
+      _swipeGuardLastChatScrollTop = st;
+      _swipeGuardLastChatScrollTs = now;
+    }, { passive: true });
+
+    // (Re)apply swiped-events attributes on new chat container.
+    applySwipeGuardDataAttributes(chatEl);
+  } else {
+    // Still apply in case settings changed.
+    applySwipeGuardDataAttributes(chatEl);
+  }
+
+  return chatEl;
+}
+
+function installSwipeGestureGuard() {
+  if (_swipeGuardInstalled) {
+    ensureSwipeGuardChatEl();
+    return;
+  }
+
+  const stop = (e) => {
+    try { e?.preventDefault?.(); } catch { }
+    try { e?.stopImmediatePropagation?.(); } catch { }
+    try { e?.stopPropagation?.(); } catch { }
+  };
+
+  /**
+   * Capture-phase filter for `swiped-left/right`.
+   * Only allow it when it clearly looks like an intentional horizontal swipe,
+   * and the gesture started from the last message.
+   */
+  const onSwipedCapture = (e) => {
+    if (!_swipeGuardEnabled) return;
+
+    const target = e?.target;
+    if (!(target instanceof Element)) return;
+
+    // Only guard inside SillyTavern app shell.
+    if (!target.closest('#sheld')) return;
+
+    // Only allow swiping when the gesture started from the last message in chat.
+    if (_swipeGuardRequireLastMes && !target.closest('#chat .last_mes')) {
+      stop(e);
+      return;
+    }
+
+    // Ensure scroll tracker is attached (best effort).
+    ensureSwipeGuardChatEl();
+
+    const d = e?.detail;
+    const xStart = d?.xStart;
+    const xEnd = d?.xEnd;
+    const yStart = d?.yStart;
+    const yEnd = d?.yEnd;
+
+    // Be conservative: if we cannot read the swipe vector, let it pass.
+    if (![xStart, xEnd, yStart, yEnd].every((n) => typeof n === 'number' && Number.isFinite(n))) return;
+
+    const absDx = Math.abs(xEnd - xStart);
+    const absDy = Math.abs(yEnd - yStart);
+
+    // If the chat was actively scrolling very recently, treat this as a scroll gesture and suppress swipes.
+    // (We only block on *meaningful* scroll deltas to avoid blocking intentional horizontal swipes.)
+    if (_swipeGuardScrollBlockMs > 0) {
+      const now = performance.now();
+      const recentlyScrolled = (now - _swipeGuardLastChatScrollTs) < _swipeGuardScrollBlockMs;
+      const meaningfulScroll = _swipeGuardLastChatScrollDeltaPx >= 8;
+      if (recentlyScrolled && meaningfulScroll) {
+        stop(e);
+        return;
+      }
+    }
+
+    if (absDx < _swipeGuardMinDxPx) {
+      stop(e);
+      return;
+    }
+
+    if (_swipeGuardDxDyRatio > 1 && absDy > 0) {
+      const ratio = absDx / absDy;
+      if (ratio < _swipeGuardDxDyRatio) {
+        stop(e);
+        return;
+      }
+    }
+  };
+
+  document.addEventListener('swiped-left', onSwipedCapture, { capture: true });
+  document.addEventListener('swiped-right', onSwipedCapture, { capture: true });
+
+  _swipeGuardInstalled = true;
+
+  // Chat container might not exist yet; init() is called multiple times anyway.
+  ensureSwipeGuardChatEl();
+  if (!(_swipeGuardChatEl instanceof HTMLElement)) {
+    setTimeout(() => ensureSwipeGuardChatEl(), 500);
+  }
+}
+
 function insertMessagesInRafChunks(ctx, messageIdStart, totalToInsert, perFrame = 3, chatEl = null, preserveViewport = true) {
   return new Promise((resolve) => {
     let messageId = messageIdStart;
@@ -499,6 +680,20 @@ async function registerSettingsPanel(ctx) {
             </div>
             <div class="st-cro-row">
               <label>
+                <input id="st_cro_swipeGuardEnabled" type="checkbox">
+                防误触左右滑动切换
+              </label>
+              <label>
+                横滑阈值(px)
+                <input id="st_cro_swipeGuardMinDxPx" type="number" min="20" max="500" step="5">
+              </label>
+              <label>
+                方向锁倍率(dx/dy)
+                <input id="st_cro_swipeGuardDxDyRatio" type="number" min="1" max="10" step="0.1">
+              </label>
+            </div>
+            <div class="st-cro-row">
+              <label>
                 <input id="st_cro_hideCodeBlocks" type="checkbox">
                 隐藏代码块（占位符）
               </label>
@@ -519,6 +714,9 @@ async function registerSettingsPanel(ctx) {
               <div>- “首屏渲染条数”通过修改 <code>power_user.chat_truncation</code> 生效。</div>
               <div>- “提前无感预加载”：上滑接近顶部（提前触发阈值内）会自动分批加载，无需点击。关闭后不会提前加载。</div>
               <div>- 手势：当你已经到达顶部，再继续往上滚动/上拉一次，会触发“加载更多”（无需点击按钮）。</div>
+              <div>- “防误触左右滑动切换”：用于解决手机竖向滚动时轻微横向偏移导致误切分支。</div>
+              <div>- “横滑阈值(px)”（默认 60）：手指横向位移达到该值才会触发切换。调大更不易误触但更难触发；调小更灵敏但更容易误触。</div>
+              <div>- “方向锁倍率(dx/dy)”（默认 1.8）：要求横向位移/纵向位移 ≥ 该倍率才算横滑。调大更严格更不易误触；调小更容易触发但更容易在斜滑/滚动时误判。</div>
               <div>- “加载更多每批”会把顶部“Show more messages”改为分帧分批插入，减少冻结；按钮仍可点击作为备用。</div>
               <div>- “禁用代码块高亮”会屏蔽 <code>hljs.highlightElement</code>，代码块仍可显示/复制。</div>
               <div>- “隐藏代码块”：不直接显示 <code>&lt;pre&gt;&lt;code&gt;</code> 内容，改为显示占位符（点击占位符可展开原代码块），并同时隐藏复制按钮。</div>
@@ -532,6 +730,9 @@ async function registerSettingsPanel(ctx) {
           const $batch = /** @type {HTMLInputElement|null} */ (root.querySelector('#st_cro_loadMoreBatchSize'));
           const $autoLoad = /** @type {HTMLInputElement|null} */ (root.querySelector('#st_cro_autoLoadMore'));
           const $threshold = /** @type {HTMLInputElement|null} */ (root.querySelector('#st_cro_autoLoadThresholdPx'));
+          const $swipeGuardEnabled = /** @type {HTMLInputElement|null} */ (root.querySelector('#st_cro_swipeGuardEnabled'));
+          const $swipeGuardMinDxPx = /** @type {HTMLInputElement|null} */ (root.querySelector('#st_cro_swipeGuardMinDxPx'));
+          const $swipeGuardDxDyRatio = /** @type {HTMLInputElement|null} */ (root.querySelector('#st_cro_swipeGuardDxDyRatio'));
           const $hideCode = /** @type {HTMLInputElement|null} */ (root.querySelector('#st_cro_hideCodeBlocks'));
           const $disableHl = /** @type {HTMLInputElement|null} */ (root.querySelector('#st_cro_disableCodeHighlight'));
           const $cv = /** @type {HTMLInputElement|null} */ (root.querySelector('#st_cro_enableContentVisibility'));
@@ -545,6 +746,9 @@ async function registerSettingsPanel(ctx) {
             if ($batch) $batch.value = String(s.loadMoreBatchSize);
             if ($autoLoad) $autoLoad.checked = Boolean(s.autoLoadMore);
             if ($threshold) $threshold.value = String(s.autoLoadThresholdPx);
+            if ($swipeGuardEnabled) $swipeGuardEnabled.checked = Boolean(s.swipeGuardEnabled);
+            if ($swipeGuardMinDxPx) $swipeGuardMinDxPx.value = String(s.swipeGuardMinDxPx);
+            if ($swipeGuardDxDyRatio) $swipeGuardDxDyRatio.value = String(s.swipeGuardDxDyRatio);
             if ($hideCode) $hideCode.checked = Boolean(s.hideCodeBlocks);
             if ($disableHl) $disableHl.checked = Boolean(s.disableCodeHighlight);
             if ($cv) $cv.checked = Boolean(s.enableContentVisibility);
@@ -557,6 +761,9 @@ async function registerSettingsPanel(ctx) {
             if ($batch) s.loadMoreBatchSize = clampInt($batch.value, 1, 500, DEFAULT_SETTINGS.loadMoreBatchSize);
             if ($autoLoad) s.autoLoadMore = Boolean($autoLoad.checked);
             if ($threshold) s.autoLoadThresholdPx = clampInt($threshold.value, 0, 10000, DEFAULT_SETTINGS.autoLoadThresholdPx);
+            if ($swipeGuardEnabled) s.swipeGuardEnabled = Boolean($swipeGuardEnabled.checked);
+            if ($swipeGuardMinDxPx) s.swipeGuardMinDxPx = clampInt($swipeGuardMinDxPx.value, 20, 500, DEFAULT_SETTINGS.swipeGuardMinDxPx);
+            if ($swipeGuardDxDyRatio) s.swipeGuardDxDyRatio = clampFloat($swipeGuardDxDyRatio.value, 1, 10, DEFAULT_SETTINGS.swipeGuardDxDyRatio);
             if ($hideCode) s.hideCodeBlocks = Boolean($hideCode.checked);
             if ($disableHl) s.disableCodeHighlight = Boolean($disableHl.checked);
             if ($cv) s.enableContentVisibility = Boolean($cv.checked);
@@ -565,12 +772,19 @@ async function registerSettingsPanel(ctx) {
             _loadMoreBatchSize = s.loadMoreBatchSize;
             _autoLoadMoreEnabled = s.autoLoadMore;
             _autoLoadThresholdPx = s.autoLoadThresholdPx;
+            _swipeGuardEnabled = Boolean(s.swipeGuardEnabled);
+            _swipeGuardMinDxPx = s.swipeGuardMinDxPx;
+            _swipeGuardDxDyRatio = s.swipeGuardDxDyRatio;
+            _swipeGuardScrollBlockMs = s.swipeGuardScrollBlockMs;
+            _swipeGuardNearBottomPx = s.swipeGuardNearBottomPx;
+            _swipeGuardRequireLastMes = Boolean(s.swipeGuardRequireLastMes);
             patchHljs(s.disableCodeHighlight);
             applyHideCodeBlocks(s.hideCodeBlocks);
             applyContentVisibility(s.enableContentVisibility);
             applyChatTruncation(ctx, s.initialRenderCount);
             installAutoLoadScrollTrigger(ctx);
             installTopIntentLoadMore(ctx);
+            installSwipeGestureGuard();
 
             saveSettings(ctx);
             refreshUI();
@@ -593,6 +807,9 @@ async function registerSettingsPanel(ctx) {
           $batch?.addEventListener('change', onChange);
           $autoLoad?.addEventListener('change', onChange);
           $threshold?.addEventListener('change', onChange);
+          $swipeGuardEnabled?.addEventListener('change', onChange);
+          $swipeGuardMinDxPx?.addEventListener('change', onChange);
+          $swipeGuardDxDyRatio?.addEventListener('change', onChange);
           $hideCode?.addEventListener('change', onChange);
           $disableHl?.addEventListener('change', onChange);
           $cv?.addEventListener('change', onChange);
@@ -605,6 +822,9 @@ async function registerSettingsPanel(ctx) {
             $batch?.removeEventListener('change', onChange);
             $autoLoad?.removeEventListener('change', onChange);
             $threshold?.removeEventListener('change', onChange);
+            $swipeGuardEnabled?.removeEventListener('change', onChange);
+            $swipeGuardMinDxPx?.removeEventListener('change', onChange);
+            $swipeGuardDxDyRatio?.removeEventListener('change', onChange);
             $hideCode?.removeEventListener('change', onChange);
             $disableHl?.removeEventListener('change', onChange);
             $cv?.removeEventListener('change', onChange);
@@ -626,6 +846,12 @@ function applyAll(ctx, s) {
   _autoLoadMoreEnabled = Boolean(s.autoLoadMore);
   _autoLoadThresholdPx = s.autoLoadThresholdPx;
   _autoLoadCooldownMs = s.autoLoadCooldownMs;
+  _swipeGuardEnabled = Boolean(s.swipeGuardEnabled);
+  _swipeGuardMinDxPx = s.swipeGuardMinDxPx;
+  _swipeGuardDxDyRatio = s.swipeGuardDxDyRatio;
+  _swipeGuardScrollBlockMs = s.swipeGuardScrollBlockMs;
+  _swipeGuardNearBottomPx = s.swipeGuardNearBottomPx;
+  _swipeGuardRequireLastMes = Boolean(s.swipeGuardRequireLastMes);
   patchHljs(s.disableCodeHighlight);
   applyHideCodeBlocks(s.hideCodeBlocks);
   applyContentVisibility(s.enableContentVisibility);
@@ -633,6 +859,7 @@ function applyAll(ctx, s) {
   installLoadMoreOverride(ctx);
   installAutoLoadScrollTrigger(ctx);
   installTopIntentLoadMore(ctx);
+  installSwipeGestureGuard();
   installCodeBlockClickToExpand();
 }
 
@@ -683,6 +910,21 @@ function renderCocktailSettings(container, ctx) {
       </label>
 
       <label class="cocktail-check">
+        <input id="st_cro_swipeGuardEnabled" type="checkbox">
+        防误触左右滑动切换
+      </label>
+
+      <label class="cocktail-field">
+        <span class="cocktail-label">横滑阈值(px)</span>
+        <input id="st_cro_swipeGuardMinDxPx" type="number" min="20" max="500" step="5">
+      </label>
+
+      <label class="cocktail-field">
+        <span class="cocktail-label">方向锁倍率(dx/dy)</span>
+        <input id="st_cro_swipeGuardDxDyRatio" type="number" min="1" max="10" step="0.1">
+      </label>
+
+      <label class="cocktail-check">
         <input id="st_cro_hideCodeBlocks" type="checkbox">
         隐藏代码块（占位符）
       </label>
@@ -706,6 +948,9 @@ function renderCocktailSettings(container, ctx) {
       <div>说明：</div>
       <div>- “首屏渲染条数”通过修改 <code>power_user.chat_truncation</code> 生效。</div>
       <div>- “加载更多每批”：把插入旧消息拆成多帧，减少卡顿。</div>
+      <div>- “防误触左右滑动切换”：用于解决手机竖向滚动时轻微横向偏移导致误切分支。</div>
+      <div>- “横滑阈值(px)”（默认 60）：手指横向位移达到该值才会触发切换。调大更不易误触但更难触发；调小更灵敏但更容易误触。</div>
+      <div>- “方向锁倍率(dx/dy)”（默认 1.8）：要求横向位移/纵向位移 ≥ 该倍率才算横滑。调大更严格更不易误触；调小更容易触发但更容易在斜滑/滚动时误判。</div>
       <div>- “禁用代码块高亮”会屏蔽 <code>hljs.highlightElement</code>，代码块仍可显示/复制。</div>
       <div>- “隐藏代码块”：会显示占位符；点击占位符可展开原代码块。</div>
     </div>
@@ -717,6 +962,9 @@ function renderCocktailSettings(container, ctx) {
   const $batch = /** @type {HTMLInputElement|null} */ (root.querySelector('#st_cro_loadMoreBatchSize'));
   const $autoLoad = /** @type {HTMLInputElement|null} */ (root.querySelector('#st_cro_autoLoadMore'));
   const $threshold = /** @type {HTMLInputElement|null} */ (root.querySelector('#st_cro_autoLoadThresholdPx'));
+  const $swipeGuardEnabled = /** @type {HTMLInputElement|null} */ (root.querySelector('#st_cro_swipeGuardEnabled'));
+  const $swipeGuardMinDxPx = /** @type {HTMLInputElement|null} */ (root.querySelector('#st_cro_swipeGuardMinDxPx'));
+  const $swipeGuardDxDyRatio = /** @type {HTMLInputElement|null} */ (root.querySelector('#st_cro_swipeGuardDxDyRatio'));
   const $hideCode = /** @type {HTMLInputElement|null} */ (root.querySelector('#st_cro_hideCodeBlocks'));
   const $disableHl = /** @type {HTMLInputElement|null} */ (root.querySelector('#st_cro_disableCodeHighlight'));
   const $cv = /** @type {HTMLInputElement|null} */ (root.querySelector('#st_cro_enableContentVisibility'));
@@ -730,6 +978,9 @@ function renderCocktailSettings(container, ctx) {
     if ($batch) $batch.value = String(s.loadMoreBatchSize);
     if ($autoLoad) $autoLoad.checked = Boolean(s.autoLoadMore);
     if ($threshold) $threshold.value = String(s.autoLoadThresholdPx);
+    if ($swipeGuardEnabled) $swipeGuardEnabled.checked = Boolean(s.swipeGuardEnabled);
+    if ($swipeGuardMinDxPx) $swipeGuardMinDxPx.value = String(s.swipeGuardMinDxPx);
+    if ($swipeGuardDxDyRatio) $swipeGuardDxDyRatio.value = String(s.swipeGuardDxDyRatio);
     if ($hideCode) $hideCode.checked = Boolean(s.hideCodeBlocks);
     if ($disableHl) $disableHl.checked = Boolean(s.disableCodeHighlight);
     if ($cv) $cv.checked = Boolean(s.enableContentVisibility);
@@ -742,6 +993,9 @@ function renderCocktailSettings(container, ctx) {
     if ($batch) s.loadMoreBatchSize = clampInt($batch.value, 1, 500, DEFAULT_SETTINGS.loadMoreBatchSize);
     if ($autoLoad) s.autoLoadMore = Boolean($autoLoad.checked);
     if ($threshold) s.autoLoadThresholdPx = clampInt($threshold.value, 0, 10000, DEFAULT_SETTINGS.autoLoadThresholdPx);
+    if ($swipeGuardEnabled) s.swipeGuardEnabled = Boolean($swipeGuardEnabled.checked);
+    if ($swipeGuardMinDxPx) s.swipeGuardMinDxPx = clampInt($swipeGuardMinDxPx.value, 20, 500, DEFAULT_SETTINGS.swipeGuardMinDxPx);
+    if ($swipeGuardDxDyRatio) s.swipeGuardDxDyRatio = clampFloat($swipeGuardDxDyRatio.value, 1, 10, DEFAULT_SETTINGS.swipeGuardDxDyRatio);
     if ($hideCode) s.hideCodeBlocks = Boolean($hideCode.checked);
     if ($disableHl) s.disableCodeHighlight = Boolean($disableHl.checked);
     if ($cv) s.enableContentVisibility = Boolean($cv.checked);
@@ -764,6 +1018,9 @@ function renderCocktailSettings(container, ctx) {
   $batch?.addEventListener('change', onChange);
   $autoLoad?.addEventListener('change', onChange);
   $threshold?.addEventListener('change', onChange);
+  $swipeGuardEnabled?.addEventListener('change', onChange);
+  $swipeGuardMinDxPx?.addEventListener('change', onChange);
+  $swipeGuardDxDyRatio?.addEventListener('change', onChange);
   $hideCode?.addEventListener('change', onChange);
   $disableHl?.addEventListener('change', onChange);
   $cv?.addEventListener('change', onChange);
@@ -776,6 +1033,9 @@ function renderCocktailSettings(container, ctx) {
     $batch?.removeEventListener('change', onChange);
     $autoLoad?.removeEventListener('change', onChange);
     $threshold?.removeEventListener('change', onChange);
+    $swipeGuardEnabled?.removeEventListener('change', onChange);
+    $swipeGuardMinDxPx?.removeEventListener('change', onChange);
+    $swipeGuardDxDyRatio?.removeEventListener('change', onChange);
     $hideCode?.removeEventListener('change', onChange);
     $disableHl?.removeEventListener('change', onChange);
     $cv?.removeEventListener('change', onChange);
