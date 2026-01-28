@@ -15,7 +15,7 @@ const EXTENSION_NAME = 'st-chat-render-optimizer';
 const EXTENSION_FOLDER_PATH = `scripts/extensions/third-party/${EXTENSION_NAME}`;
 
 const DEFAULT_SETTINGS = Object.freeze({
-  initialRenderCount: 50,
+  initialRenderCount: 20,
   loadMoreBatchSize: 20,
   disableCodeHighlight: true,
   hideCodeBlocks: true,
