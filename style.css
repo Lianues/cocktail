@@ -5,6 +5,164 @@
  *   - st-startup-optimizer
  */
 
+/* -------------------------------------------------------------------------- */
+/* cocktail 自定义“鸡尾酒面板 + 子面板”样式（不使用酒馆 inline-drawer 样式） */
+/* -------------------------------------------------------------------------- */
+
+#cocktail_settings_root.cocktail-panel-root {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 8px 0;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+#cocktail_settings_root .cocktail-panel-header {
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+#cocktail_settings_root .cocktail-panel-desc {
+  opacity: 0.85;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+#cocktail_settings_root .cocktail-panel-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+#cocktail_settings_root .cocktail-subpanel {
+  border: 1px solid var(--SmartThemeBorderColor);
+  border-radius: 12px;
+  overflow: hidden;
+  background: rgba(0, 0, 0, 0.08);
+}
+
+#cocktail_settings_root .cocktail-subpanel-header {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 0;
+  border-bottom: 1px solid var(--SmartThemeBorderColor);
+  background: rgba(255, 255, 255, 0.04);
+  color: inherit;
+  cursor: pointer;
+  user-select: none;
+}
+
+#cocktail_settings_root .cocktail-subpanel-header:hover {
+  filter: brightness(1.08);
+}
+
+#cocktail_settings_root .cocktail-subpanel-title {
+  font-weight: 700;
+  font-size: 13px;
+}
+
+#cocktail_settings_root .cocktail-subpanel-indicator {
+  opacity: 0.85;
+  font-weight: 700;
+  font-size: 16px;
+  line-height: 1;
+}
+
+#cocktail_settings_root .cocktail-subpanel-body {
+  padding: 10px 12px;
+}
+
+#cocktail_settings_root .cocktail-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+#cocktail_settings_root .cocktail-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px 14px;
+}
+
+@media (max-width: 720px) {
+  #cocktail_settings_root .cocktail-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+#cocktail_settings_root .cocktail-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+#cocktail_settings_root .cocktail-field {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+#cocktail_settings_root .cocktail-label {
+  opacity: 0.9;
+}
+
+#cocktail_settings_root input[type="number"],
+#cocktail_settings_root select {
+  width: 140px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  border: 1px solid var(--SmartThemeBorderColor);
+  background: rgba(255, 255, 255, 0.06);
+  color: inherit;
+  box-sizing: border-box;
+}
+
+#cocktail_settings_root .cocktail-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+#cocktail_settings_root .cocktail-btn {
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--SmartThemeBorderColor);
+  background: rgba(255, 255, 255, 0.06);
+  color: inherit;
+  cursor: pointer;
+}
+
+#cocktail_settings_root .cocktail-btn:hover {
+  filter: brightness(1.12);
+}
+
+#cocktail_settings_root .cocktail-help {
+  opacity: 0.85;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+#cocktail_settings_root .cocktail-help code {
+  padding: 0 4px;
+  border-radius: 6px;
+  border: 1px solid var(--SmartThemeBorderColor);
+  background: rgba(0, 0, 0, 0.12);
+}
+
+#cocktail_settings_root .cocktail-empty,
+#cocktail_settings_root .cocktail-error {
+  opacity: 0.85;
+  font-size: 12px;
+}
+
 .st-cocktail-panel {
   display: flex;
   flex-direction: column;
