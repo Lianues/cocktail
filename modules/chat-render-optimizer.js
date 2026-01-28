@@ -52,6 +52,8 @@ let _autoLoadChatEl = null;
 let _topIntentInstalled = false;
 let _touchStartY = null;
 
+let _codeBlockClickToExpandInstalled = false;
+
 function clampInt(value, min, max, fallback) {
   const n = Number(value);
   if (!Number.isFinite(n)) return fallback;
@@ -106,6 +108,71 @@ function applyHideCodeBlocks(enable) {
 
 function applyContentVisibility(enable) {
   document.body.classList.toggle('st-cro-cv', Boolean(enable));
+}
+
+function installCodeBlockClickToExpand() {
+  if (_codeBlockClickToExpandInstalled) return;
+
+  const chatEl = document.getElementById('chat');
+  if (!(chatEl instanceof HTMLElement)) {
+    // Chat container might not exist yet; init() is called multiple times anyway.
+    setTimeout(() => installCodeBlockClickToExpand(), 500);
+    return;
+  }
+
+  const ensureCollapseButton = (pre) => {
+    if (!(pre instanceof HTMLElement)) return;
+
+    const codeEl = pre.querySelector('code');
+    if (!(codeEl instanceof HTMLElement)) return;
+
+    // Avoid duplicates
+    if (codeEl.querySelector('.st-cro-code-collapse')) return;
+
+    const btn = document.createElement('i');
+    // Reuse SillyTavern's .code-copy styling; we only shift it to the left in our CSS.
+    btn.classList.add('fa-solid', 'fa-chevron-up', 'code-copy', 'st-cro-code-collapse', 'interactable');
+    btn.title = '收起代码块';
+    btn.tabIndex = 0;
+
+    const copyBtn = codeEl.querySelector('.code-copy:not(.st-cro-code-collapse)');
+    if (copyBtn instanceof HTMLElement) {
+      codeEl.insertBefore(btn, copyBtn);
+    } else {
+      codeEl.appendChild(btn);
+    }
+
+    const collapse = (ev) => {
+      ev?.preventDefault?.();
+      ev?.stopImmediatePropagation?.();
+      ev?.stopPropagation?.();
+      pre.classList.remove('st-cro-code-expanded');
+      btn.remove();
+    };
+
+    btn.addEventListener('click', collapse);
+    btn.addEventListener('keydown', (ev) => {
+      if (!ev || typeof ev.key !== 'string') return;
+      if (ev.key !== 'Enter' && ev.key !== ' ') return;
+      collapse(ev);
+    });
+  };
+
+  const onClick = (e) => {
+    if (!document.body.classList.contains('st-cro-hide-code')) return;
+    const target = e?.target;
+    if (!(target instanceof Element)) return;
+
+    const pre = target.closest('#chat .mes_text pre, #chat .mes_reasoning pre');
+    if (!(pre instanceof HTMLElement)) return;
+    if (pre.classList.contains('st-cro-code-expanded')) return; // one-way expand (avoid interfering with selection/copy)
+
+    pre.classList.add('st-cro-code-expanded');
+    ensureCollapseButton(pre);
+  };
+
+  chatEl.addEventListener('click', onClick);
+  _codeBlockClickToExpandInstalled = true;
 }
 
 function patchHljs(disableHighlight) {
@@ -454,7 +521,7 @@ async function registerSettingsPanel(ctx) {
               <div>- 手势：当你已经到达顶部，再继续往上滚动/上拉一次，会触发“加载更多”（无需点击按钮）。</div>
               <div>- “加载更多每批”会把顶部“Show more messages”改为分帧分批插入，减少冻结；按钮仍可点击作为备用。</div>
               <div>- “禁用代码块高亮”会屏蔽 <code>hljs.highlightElement</code>，代码块仍可显示/复制。</div>
-              <div>- “隐藏代码块”：不直接显示 <code>&lt;pre&gt;&lt;code&gt;</code> 内容，改为显示小占位符，并同时隐藏复制按钮。</div>
+              <div>- “隐藏代码块”：不直接显示 <code>&lt;pre&gt;&lt;code&gt;</code> 内容，改为显示占位符（点击占位符可展开原代码块），并同时隐藏复制按钮。</div>
               <div>- “content-visibility” 是浏览器的 CSS 性能优化：离开视口的消息会跳过布局/绘制，聊天很长时更流畅；主要在 Chromium / 酒馆桌面端有效，若出现显示/滚动异常请关闭。</div>
             </div>
           `;
@@ -566,6 +633,7 @@ function applyAll(ctx, s) {
   installLoadMoreOverride(ctx);
   installAutoLoadScrollTrigger(ctx);
   installTopIntentLoadMore(ctx);
+  installCodeBlockClickToExpand();
 }
 
 async function init() {
@@ -639,6 +707,7 @@ function renderCocktailSettings(container, ctx) {
       <div>- “首屏渲染条数”通过修改 <code>power_user.chat_truncation</code> 生效。</div>
       <div>- “加载更多每批”：把插入旧消息拆成多帧，减少卡顿。</div>
       <div>- “禁用代码块高亮”会屏蔽 <code>hljs.highlightElement</code>，代码块仍可显示/复制。</div>
+      <div>- “隐藏代码块”：会显示占位符；点击占位符可展开原代码块。</div>
     </div>
   `;
 

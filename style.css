@@ -278,22 +278,65 @@
 
 /* Hide code blocks (show placeholder) */
 body.st-cro-hide-code #chat .mes_text pre {
-  overflow: hidden;
+  cursor: pointer;
 }
 
-body.st-cro-hide-code #chat .mes_text pre code {
+body.st-cro-hide-code #chat .mes_text pre.st-cro-code-expanded {
+  cursor: auto;
+}
+
+/* Collapsed: keep the original <pre><code> box styles, but hide its content visually */
+body.st-cro-hide-code #chat .mes_text pre:not(.st-cro-code-expanded) code,
+body.st-cro-hide-code #chat .mes_reasoning pre:not(.st-cro-code-expanded) code {
+  position: relative; /* ensure placeholder overlay positioning */
+  overflow: hidden !important;
+  max-height: 3.5em; /* roughly: 2em padding + 1 line */
+  color: transparent !important; /* hide raw text nodes */
+}
+
+body.st-cro-hide-code #chat .mes_text pre:not(.st-cro-code-expanded) code *,
+body.st-cro-hide-code #chat .mes_reasoning pre:not(.st-cro-code-expanded) code * {
+  color: transparent !important; /* hide hljs spans */
+}
+
+body.st-cro-hide-code #chat .mes_text pre:not(.st-cro-code-expanded) code::after,
+body.st-cro-hide-code #chat .mes_reasoning pre:not(.st-cro-code-expanded) code::after {
+  content: "⟦ 点击展开代码块 ⟧";
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  padding: 1em; /* match SillyTavern default code padding */
+  color: var(--SmartThemeBodyColor, #e8e8e8);
+  opacity: 0.85;
+  font-size: 0.95em;
+  line-height: 1.25;
+  white-space: nowrap;
+  pointer-events: none; /* click is handled on <pre> */
+}
+
+body.st-cro-hide-code #chat .mes_text pre:not(.st-cro-code-expanded) code .code-copy,
+body.st-cro-hide-code #chat .mes_reasoning pre:not(.st-cro-code-expanded) code .code-copy {
   display: none !important;
 }
 
-body.st-cro-hide-code #chat .mes_text pre .code-copy {
-  display: none !important;
+/* Collapse button: reuses .code-copy base styles, but shifted left. Hidden by default. */
+#chat .st-cro-code-collapse {
+  display: none;
 }
 
-body.st-cro-hide-code #chat .mes_text pre::before {
-  content: "⟦…⟧";
-  display: inline-block;
-  opacity: 0.75;
-  font-size: 0.9em;
+body.st-cro-hide-code #chat pre.st-cro-code-expanded code .st-cro-code-collapse {
+  display: flex;
+  right: 26px;
+}
+
+/* Also cover reasoning blocks (same structure as mes_text) */
+body.st-cro-hide-code #chat .mes_reasoning pre {
+  cursor: pointer;
+}
+
+body.st-cro-hide-code #chat .mes_reasoning pre.st-cro-code-expanded {
+  cursor: auto;
 }
 
 /* Optional: Chromium/Electron only. Disabled by default, controlled by body class. */
