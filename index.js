@@ -17,4 +17,5 @@ import './core/panel.js';
 import './modules/startup-optimizer.js';
 import './modules/chat-render-optimizer.js';
 import './modules/regex-refresh-optimizer.js';
+import './modules/preset-panel-optimizer.js';
 
