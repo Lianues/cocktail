@@ -4,7 +4,7 @@
  * 目标：
  * - 进入主页面后，后台拉取远端 manifest.json 对比版本号
  * - 如果不是最新版本：弹出提示，让用户选择是否更新
- * - 用户选择更新：触发扩展管理器的 `.btn_update` 点击事件，并在更新完成后自动刷新页面
+ * - 用户选择更新：触发扩展管理器的 `.btn_update` 点击事件
  *
  * 说明：
  * - 不改酒馆源代码；仅通过前端扩展 JS 实现
@@ -201,14 +201,14 @@ async function promptAndMaybeUpdate({ currentVersion, latestVersion }) {
   const text =
     `当前版本：${currentVersion}\n` +
     `最新版本：${latestVersion}\n\n` +
-    `是否现在更新？更新完成后会自动刷新页面。`;
+    `是否现在更新？`;
 
   // Fallback: native confirm
   let shouldUpdate = false;
   try {
     if (Popup?.show?.confirm && POPUP_RESULT) {
       const result = await Popup.show.confirm(title, text, {
-        okButton: '更新并刷新',
+        okButton: '更新',
         cancelButton: '稍后',
       });
       shouldUpdate = result === POPUP_RESULT.AFFIRMATIVE;
@@ -228,13 +228,6 @@ async function promptAndMaybeUpdate({ currentVersion, latestVersion }) {
 
   // Trigger update via extensions.js delegated handler
   await triggerUpdateViaBtnUpdate(externalId);
-
-  // Always reload after update attempt (requirement)
-  try {
-    globalThis.location?.reload?.();
-  } catch {
-    location.reload();
-  }
 }
 
 async function checkOnce() {
