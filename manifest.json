@@ -3,7 +3,7 @@
   "loading_order": 0,
   "requires": [],
   "optional": [],
-  "dependencies": ["regex, preset"],
+  "dependencies": ["regex"],
   "js": "index.js",
   "css": "style.css",
   "author": "Limerence",
