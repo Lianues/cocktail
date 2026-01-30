@@ -38,6 +38,7 @@ let _settings = null;
 
 let _enginePromise = null;
 let _engine = null;
+let _regexUiDepsPromise = null;
 
 let _dirty = false;
 let _lastPanelVisible = false;
@@ -306,6 +307,272 @@ async function confirmUi(message, title = '确认') {
     }
   } catch { }
   return globalThis.confirm?.(`${title}\n\n${message}`) ?? true;
+}
+
+async function getRegexUiDeps() {
+  if (_regexUiDepsPromise) return _regexUiDepsPromise;
+
+  _regexUiDepsPromise = Promise.all([
+    import('/scripts/extensions.js'),
+    import('/scripts/popup.js'),
+    import('/scripts/utils.js'),
+  ]).then(([extensionsMod, popupMod, utilsMod]) => ({
+    extensionsMod,
+    popupMod,
+    utilsMod,
+  })).catch((e) => {
+    console.warn(`[${EXTENSION_NAME}] failed to load regex UI deps`, e);
+    return null;
+  });
+
+  return _regexUiDepsPromise;
+}
+
+function syncScriptLabelUi(scriptLabelEl, script) {
+  if (!(scriptLabelEl instanceof HTMLElement)) return;
+  if (!script) return;
+
+  // Name
+  const nameEl = scriptLabelEl.querySelector('.regex_script_name');
+  if (nameEl instanceof HTMLElement) {
+    const name = String(script.scriptName ?? '');
+    nameEl.textContent = name;
+    nameEl.setAttribute('title', name);
+  }
+
+  // Disabled checkbox on list item
+  const disableCb = scriptLabelEl.querySelector('input.disable_regex');
+  if (disableCb instanceof HTMLInputElement) {
+    disableCb.checked = Boolean(script.disabled);
+  }
+}
+
+async function openRegexEditorForScript({ scriptId, scriptTypeMaybe, scriptLabelEl }) {
+  const ctx = _ctx || getCtx();
+  if (!ctx) return;
+
+  const engine = await importRegexEngine();
+  if (!engine) return;
+
+  const deps = await getRegexUiDeps();
+  if (!deps) {
+    globalThis.toastr?.error('无法加载 Regex 编辑器依赖，无法打开编辑器。');
+    return;
+  }
+
+  const $ = globalThis.jQuery;
+  if (typeof $ !== 'function') {
+    console.warn(`[${EXTENSION_NAME}] jQuery not found; cannot open regex editor`);
+    globalThis.toastr?.error('未找到 jQuery，无法打开编辑器。');
+    return;
+  }
+
+  const { extensionsMod, popupMod, utilsMod } = deps;
+  const renderExtensionTemplateAsync = extensionsMod?.renderExtensionTemplateAsync;
+  const callGenericPopup = popupMod?.callGenericPopup;
+  const POPUP_TYPE = popupMod?.POPUP_TYPE;
+
+  if (typeof renderExtensionTemplateAsync !== 'function' || typeof callGenericPopup !== 'function' || !POPUP_TYPE) {
+    console.warn(`[${EXTENSION_NAME}] regex UI deps missing exports`, deps);
+    globalThis.toastr?.error('Regex 编辑器依赖缺失，无法打开编辑器。');
+    return;
+  }
+
+  // Resolve script + type from DOM type or fallback across all types
+  let hit = null;
+  if (scriptTypeMaybe !== null && scriptTypeMaybe !== undefined) {
+    const list = engine.getScriptsByType(scriptTypeMaybe) || [];
+    const index = list.findIndex(s => s?.id === scriptId);
+    if (index !== -1) {
+      hit = { type: scriptTypeMaybe, list, index, script: list[index] };
+    }
+  }
+  if (!hit) hit = findScriptAcrossTypes(engine, scriptId);
+
+  if (!hit?.script) {
+    globalThis.toastr?.error('未找到要编辑的正则脚本。');
+    return;
+  }
+
+  const existingScript = hit.script;
+  if (!existingScript?.scriptName) {
+    globalThis.toastr?.error('该脚本没有名称，请删除后重新创建。');
+    return;
+  }
+
+  const editorHtml = $(await renderExtensionTemplateAsync('regex', 'editor'));
+
+  // Fill values
+  editorHtml.find('.regex_script_name').val(existingScript.scriptName);
+  editorHtml.find('.find_regex').val(existingScript.findRegex || '');
+  editorHtml.find('.regex_replace_string').val(existingScript.replaceString || '');
+  editorHtml.find('.regex_trim_strings').val(existingScript.trimStrings?.join('\n') || []);
+  editorHtml.find('input[name="disabled"]').prop('checked', existingScript.disabled ?? false);
+  editorHtml.find('input[name="only_format_display"]').prop('checked', existingScript.markdownOnly ?? false);
+  editorHtml.find('input[name="only_format_prompt"]').prop('checked', existingScript.promptOnly ?? false);
+  editorHtml.find('input[name="run_on_edit"]').prop('checked', existingScript.runOnEdit ?? false);
+  editorHtml.find('select[name="substitute_regex"]').val(existingScript.substituteRegex ?? 0);
+  editorHtml.find('input[name="min_depth"]').val(existingScript.minDepth ?? '');
+  editorHtml.find('input[name="max_depth"]').val(existingScript.maxDepth ?? '');
+
+  try {
+    const placementArr = Array.isArray(existingScript.placement) ? existingScript.placement : [];
+    placementArr.forEach((element) => {
+      editorHtml
+        .find(`input[name="replace_position"][value="${element}"]`)
+        .prop('checked', true);
+    });
+  } catch { }
+
+  const regexFromString = utilsMod?.regexFromString;
+  const setInfoBlock = utilsMod?.setInfoBlock;
+  const uuidv4 = utilsMod?.uuidv4;
+
+  const updateInfoBlock = () => {
+    const infoBlock = editorHtml.find('.info-block').get(0);
+    const infoBlockFlagsHint = editorHtml.find('#regex_info_block_flags_hint');
+    const findRegex = String(editorHtml.find('.find_regex').val());
+
+    try { infoBlockFlagsHint.hide(); } catch { }
+
+    if (typeof setInfoBlock !== 'function') return;
+
+    // Clear the info block if the find regex is empty
+    if (!findRegex) {
+      setInfoBlock(infoBlock, 'Find Regex 为空', 'info');
+      return;
+    }
+
+    if (typeof regexFromString !== 'function') return;
+
+    try {
+      const regex = regexFromString(findRegex);
+      if (!regex) throw new Error('无效的 Find Regex');
+
+      const flagInfo = [];
+      flagInfo.push(regex.flags.includes('g') ? '全局匹配 (g)' : '仅匹配第一个');
+      flagInfo.push(regex.flags.includes('i') ? '忽略大小写 (i)' : '区分大小写');
+
+      setInfoBlock(infoBlock, flagInfo.join('；'), 'hint');
+      try { infoBlockFlagsHint.show(); } catch { }
+    } catch (error) {
+      setInfoBlock(infoBlock, error?.message ?? String(error), 'error');
+    }
+  };
+
+  const updateTestResult = () => {
+    updateInfoBlock();
+
+    // Test mode UI (optional)
+    try {
+      if (!editorHtml.find('#regex_test_mode').is(':visible')) return;
+    } catch {
+      return;
+    }
+
+    if (typeof engine?.runRegexScript !== 'function') return;
+
+    const testScript = {
+      id: (typeof uuidv4 === 'function') ? uuidv4() : (globalThis.crypto?.randomUUID?.() ?? String(Math.random())),
+      scriptName: editorHtml.find('.regex_script_name').val().toString(),
+      findRegex: editorHtml.find('.find_regex').val().toString(),
+      replaceString: editorHtml.find('.regex_replace_string').val().toString(),
+      trimStrings: String(editorHtml.find('.regex_trim_strings').val()).split('\n').filter((e) => e.length !== 0) || [],
+      substituteRegex: Number(editorHtml.find('select[name="substitute_regex"]').val()),
+      disabled: false,
+      promptOnly: false,
+      markdownOnly: false,
+      runOnEdit: false,
+      minDepth: null,
+      maxDepth: null,
+      placement: null,
+    };
+
+    const rawTestString = String(editorHtml.find('#regex_test_input').val());
+    const result = engine.runRegexScript(testScript, rawTestString);
+    editorHtml.find('#regex_test_output').text(result);
+  };
+
+  // Wire up test mode toggle
+  editorHtml.find('#regex_test_mode_toggle').on('click', function () {
+    editorHtml.find('#regex_test_mode').toggleClass('displayNone');
+    updateTestResult();
+  });
+
+  editorHtml.find('input, textarea, select').on('input', updateTestResult);
+  updateInfoBlock();
+
+  const popupResult = await callGenericPopup(
+    editorHtml,
+    POPUP_TYPE.CONFIRM,
+    '',
+    { okButton: '保存', cancelButton: '取消', allowVerticalScrolling: true },
+  );
+
+  if (!popupResult) return;
+
+  const newScriptName = String(editorHtml.find('.regex_script_name').val());
+  const newFindRegex = String(editorHtml.find('.find_regex').val());
+  const newReplaceString = String(editorHtml.find('.regex_replace_string').val());
+  const newTrimStrings = String(editorHtml.find('.regex_trim_strings').val()).split('\n').filter((e) => e.length !== 0) || [];
+  const newPlacement =
+    editorHtml
+      .find('input[name="replace_position"]')
+      .filter(':checked')
+      .map(function () { return parseInt($(this).val().toString()); })
+      .get()
+      .filter((e) => !isNaN(e)) || [];
+
+  const newDisabled = Boolean(editorHtml.find('input[name="disabled"]').prop('checked'));
+  const newMarkdownOnly = Boolean(editorHtml.find('input[name="only_format_display"]').prop('checked'));
+  const newPromptOnly = Boolean(editorHtml.find('input[name="only_format_prompt"]').prop('checked'));
+  const newRunOnEdit = Boolean(editorHtml.find('input[name="run_on_edit"]').prop('checked'));
+  const newSubstituteRegex = Number(editorHtml.find('select[name="substitute_regex"]').val());
+  const newMinDepth = parseInt(String(editorHtml.find('input[name="min_depth"]').val()));
+  const newMaxDepth = parseInt(String(editorHtml.find('input[name="max_depth"]').val()));
+
+  if (!newScriptName) {
+    globalThis.toastr?.error('无法保存：脚本名为空。');
+    return;
+  }
+  if (newFindRegex.length === 0) {
+    globalThis.toastr?.warning('该脚本 Find Regex 为空：可能不会生效，但仍会保存。');
+  }
+  if (newPlacement.length === 0) {
+    globalThis.toastr?.warning('该脚本未勾选任何 Affects：可能不会生效，但仍会保存。');
+  }
+
+  // Mutate in place to keep DOM closures (e.g. export) pointing to latest data
+  existingScript.scriptName = newScriptName;
+  existingScript.findRegex = newFindRegex;
+  existingScript.replaceString = newReplaceString;
+  existingScript.trimStrings = newTrimStrings;
+  existingScript.placement = newPlacement;
+  existingScript.disabled = newDisabled;
+  existingScript.markdownOnly = newMarkdownOnly;
+  existingScript.promptOnly = newPromptOnly;
+  existingScript.runOnEdit = newRunOnEdit;
+  existingScript.substituteRegex = newSubstituteRegex;
+  existingScript.minDepth = newMinDepth;
+  existingScript.maxDepth = newMaxDepth;
+
+  await engine.saveScriptsByType(hit.list, hit.type);
+
+  // Keep behavior similar to core: saving scoped/preset scripts implies allowing them
+  try {
+    if (hit.type === engine.SCRIPT_TYPES.SCOPED) {
+      const character = ctx.characters?.[ctx.characterId];
+      engine.allowScopedScripts?.(character);
+    }
+    if (hit.type === engine.SCRIPT_TYPES.PRESET) {
+      engine.allowPresetScripts?.(engine.getCurrentPresetAPI?.(), engine.getCurrentPresetName?.());
+    }
+  } catch { }
+
+  syncScriptLabelUi(scriptLabelEl, existingScript);
+
+  saveSettings(ctx);
+  markDirty();
 }
 
 async function deleteScriptsByIds(idsByType) {
@@ -828,6 +1095,23 @@ function installGlobalEventInterceptors() {
       const enable = Boolean(bulkEnable);
       queueWork(async () => {
         await bulkSetDisabled({ enable });
+      });
+      return;
+    }
+
+    // 单条编辑（修复跨作用域移动后：编辑器内容显示为空）
+    const editBtn = target.closest('.edit_existing_regex');
+    if (editBtn) {
+      const scriptLabel = target.closest('.regex-script-label');
+      if (!scriptLabel) return;
+      stopEvent(e);
+      const scriptId = scriptLabel.getAttribute('id') || scriptLabel.id;
+      if (!scriptId) return;
+      queueWork(async () => {
+        const engine = await importRegexEngine();
+        if (!engine) return;
+        const type = getScriptTypeFromDom(scriptLabel, engine);
+        await openRegexEditorForScript({ scriptId, scriptTypeMaybe: type, scriptLabelEl: scriptLabel });
       });
       return;
     }

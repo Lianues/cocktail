@@ -3,10 +3,10 @@
   "loading_order": 0,
   "requires": [],
   "optional": [],
-  "dependencies": ["regex"],
+  "dependencies": ["regex, preset"],
   "js": "index.js",
   "css": "style.css",
   "author": "Limerence",
-  "version": "0.1.4"
+  "version": "0.1.5"
 }
 
