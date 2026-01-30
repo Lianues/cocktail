@@ -6,6 +6,15 @@
  */
 
 /* -------------------------------------------------------------------------- */
+/* st-html-render-cache                                                       */
+/* -------------------------------------------------------------------------- */
+
+#st-hrc-stash-root,
+.st-hrc-stash-root {
+  display: none !important;
+}
+
+/* -------------------------------------------------------------------------- */
 /* cocktail 自定义“鸡尾酒面板 + 子面板”样式（不使用酒馆 inline-drawer 样式） */
 /* -------------------------------------------------------------------------- */
 
@@ -438,5 +447,295 @@ body.st-cro-cv #chat .mes {
 .st-startup-optimizer-badge .stso-sub {
   opacity: 0.85;
   margin-left: 6px;
+}
+
+/* -------------------------------------------------------------------------- */
+/* st-ui-animation-optimizer */
+/* -------------------------------------------------------------------------- */
+
+.st-uao-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 6px 0;
+}
+
+.st-uao-row {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.st-uao-row label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.st-uao-help {
+  opacity: 0.85;
+  font-size: 0.95em;
+  line-height: 1.35;
+}
+
+.st-uao-help code {
+  padding: 0 4px;
+  border-radius: 6px;
+  border: 1px solid var(--SmartThemeBorderColor);
+  background: rgba(0, 0, 0, 0.12);
+}
+
+/* Top drawers: avoid height transitions; use transform/opacity instead. */
+@keyframes st-uao-topDrawerIn {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+body.st-uao-top-drawer #top-settings-holder .drawer-content {
+  /* Core uses transition on height/display; disable it to avoid layout thrash. */
+  transition-property: none !important;
+  transition-duration: 0ms !important;
+  transition-delay: 0ms !important;
+}
+
+body.st-uao-top-drawer #top-settings-holder .drawer-content.openDrawer {
+  animation: st-uao-topDrawerIn var(--animation-duration-2x) ease both;
+  will-change: transform, opacity;
+}
+
+/* Disable height/display transitions for ALL drawer-content (PromptManager popup etc). */
+body.st-uao-top-drawer .drawer-content {
+  transition-property: none !important;
+  transition-duration: 0ms !important;
+  transition-delay: 0ms !important;
+}
+
+/* Replace jQuery slideToggle/Up/Down (height animation) with compositor-friendly transitions */
+body.st-uao-jq-slide .st-uao-slide {
+  will-change: opacity, transform;
+  transition:
+    opacity var(--st-uao-slide-duration, var(--animation-duration-2x)) ease,
+    transform var(--st-uao-slide-duration, var(--animation-duration-2x)) ease;
+  transform-origin: top;
+}
+
+body.st-uao-jq-slide .st-uao-slide:not(.st-uao-open) {
+  opacity: 0;
+  transform: translateY(-8px);
+  pointer-events: none;
+}
+
+body.st-uao-jq-slide .st-uao-slide.st-uao-open {
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
+}
+
+/* Optional: disable expensive blur on drawer backgrounds. */
+body.st-uao-no-blur .drawer-content {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+/* WorldInfo inline-drawer: avoid height/max-height animation (layout thrash).
+   We mimic the top drawer feel: transform/opacity only, so it stays compositor-friendly. */
+body.st-uao-wi-inline #WorldInfo #world_popup_entries_list .inline-drawer.st-uao-managed > .inline-drawer-content {
+  will-change: opacity, transform;
+  transition:
+    opacity var(--animation-duration-2x) ease,
+    transform var(--animation-duration-2x) ease;
+  transform-origin: top;
+  contain: layout paint;
+}
+
+body.st-uao-wi-inline #WorldInfo #world_popup_entries_list .inline-drawer.st-uao-managed:not(.st-uao-open) > .inline-drawer-content {
+  opacity: 0;
+  transform: translateY(-8px);
+  pointer-events: none;
+}
+
+body.st-uao-wi-inline #WorldInfo #world_popup_entries_list .inline-drawer.st-uao-managed.st-uao-open > .inline-drawer-content {
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
+}
+
+body.st-uao-wi-inline #WorldInfo #world_popup_entries_list .st-uao-wi-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  opacity: 0.85;
+  font-size: 12px;
+  padding: 8px 6px;
+}
+
+/* Extensions inline-drawer: same "top drawer" feel (transform/opacity only) */
+body.st-uao-ext-inline #extensions_settings2 .inline-drawer.st-uao-managed > .inline-drawer-content,
+body.st-uao-ext-inline #extensions_settings .inline-drawer.st-uao-managed > .inline-drawer-content {
+  will-change: opacity, transform;
+  transition:
+    opacity var(--animation-duration-2x) ease,
+    transform var(--animation-duration-2x) ease;
+  transform-origin: top;
+  contain: layout paint;
+}
+
+body.st-uao-ext-inline #extensions_settings2 .inline-drawer.st-uao-managed:not(.st-uao-open) > .inline-drawer-content,
+body.st-uao-ext-inline #extensions_settings .inline-drawer.st-uao-managed:not(.st-uao-open) > .inline-drawer-content {
+  opacity: 0;
+  transform: translateY(-8px);
+  pointer-events: none;
+}
+
+body.st-uao-ext-inline #extensions_settings2 .inline-drawer.st-uao-managed.st-uao-open > .inline-drawer-content,
+body.st-uao-ext-inline #extensions_settings .inline-drawer.st-uao-managed.st-uao-open > .inline-drawer-content {
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
+}
+
+/* WorldInfo entry title/memo textarea:
+   - Ensure flex children can shrink so wrapping works reliably
+   - Only allow internal wheel scrolling when focused */
+body #WorldInfo #world_popup_entries_list .WIEntryTitleAndStatus .flex-container.flex1 {
+  min-width: 0;
+}
+
+body #WorldInfo #world_popup_entries_list textarea[name="comment"].text_pole {
+  min-width: 0;
+  width: 100%;
+  white-space: pre-wrap !important;
+  overflow-wrap: anywhere !important;
+  word-break: break-word !important;
+  overflow-x: hidden !important;
+  overflow-y: hidden !important; /* allow wheel to scroll the list unless focused */
+}
+
+body #WorldInfo #world_popup_entries_list textarea[name="comment"].text_pole:focus {
+  overflow-y: auto !important;
+}
+
+/* WorldInfo long list: optional content-visibility/contain to reduce layout/paint cost. */
+body.st-uao-wi-cv #WorldInfo #world_popup_entries_list .world_entry {
+  content-visibility: auto;
+  contain-intrinsic-size: 1px 260px;
+}
+
+body.st-uao-wi-cv #WorldInfo #world_popup_entries_list .world_entry,
+body.st-uao-wi-cv #WorldInfo #world_popup_entries_list .world_entry .inline-drawer-content {
+  contain: content;
+}
+
+/* -------------------------------------------------------------------------- */
+/* st-chat-saving-unblocker (integrated) */
+/* -------------------------------------------------------------------------- */
+
+.st-csu-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 6px 0;
+}
+
+.st-csu-row {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.st-csu-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.st-csu-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.st-csu-help {
+  opacity: 0.85;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+/* Badge fixed ABOVE send button (requested) */
+#send_but {
+  position: relative;
+  overflow: visible;
+}
+
+#send_but .st-csu-save-badge {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 10px);
+  z-index: 2147483646;
+
+  display: none; /* default hidden */
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+
+  padding: 8px 10px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+
+  font-size: 12px;
+  line-height: 1.1;
+
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.30);
+
+  pointer-events: none; /* saving state won't block UI */
+  user-select: none;
+}
+
+#send_but .st-csu-save-badge[data-state="saving"],
+#send_but .st-csu-save-badge[data-state="failed"] {
+  display: flex;
+}
+
+#send_but .st-csu-save-badge[data-state="failed"] {
+  background: rgba(160, 0, 0, 0.62);
+  pointer-events: auto; /* click to retry */
+  cursor: pointer;
+}
+
+#send_but .st-csu-save-badge-arrow {
+  font-weight: 800;
+  font-size: 16px;
+  line-height: 1;
+}
+
+#send_but .st-csu-save-badge-text {
+  font-weight: 800;
+  font-size: 12px;
+  line-height: 1;
+}
+
+/* Portrait: more translucent */
+@media (orientation: portrait) {
+  #send_but .st-csu-save-badge {
+    background: rgba(0, 0, 0, 0.42);
+  }
+  #send_but .st-csu-save-badge[data-state="failed"] {
+    background: rgba(160, 0, 0, 0.48);
+  }
 }
 

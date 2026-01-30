@@ -167,7 +167,7 @@ function ensureCocktailPanel() {
 
   const desc = document.createElement('div');
   desc.className = 'cocktail-panel-desc';
-  desc.textContent = '综合优化：启动加载 / 聊天渲染 / 正则刷新';
+  desc.textContent = '综合优化：启动加载 / 聊天渲染 / 正则刷新 等（按需启用）';
 
   const body = document.createElement('div');
   body.id = COCKTAIL_BODY_ID;

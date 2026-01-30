@@ -18,5 +18,7 @@ import './modules/startup-optimizer.js';
 import './modules/chat-render-optimizer.js';
 import './modules/regex-refresh-optimizer.js';
 import './modules/preset-panel-optimizer.js';
+import './modules/chat-saving-unblocker.js';
 import './modules/auto-update-checker.js';
-
+import './modules/ui-animation-optimizer.js';
+import './modules/html-render-cache.js';
