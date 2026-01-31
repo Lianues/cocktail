@@ -156,7 +156,7 @@ function findDrawerParts(drawerEl) {
 }
 
 function setInlineDrawerIcon(icon, expanded) {
-  if (!(icon instanceof HTMLElement)) return;
+  if (!isDomElement(icon)) return;
   if (expanded) {
     icon.classList.remove('down', 'fa-circle-chevron-down');
     icon.classList.add('up', 'fa-circle-chevron-up');
@@ -208,6 +208,110 @@ function getJq() {
   return $;
 }
 
+function isDomElement(el) {
+  return Boolean(el && typeof el === 'object' && el.nodeType === 1);
+}
+
+function isStyleableElement(el) {
+  if (!isDomElement(el)) return false;
+  // Avoid `instanceof HTMLElement` checks (can fail across realms / sandboxes).
+  return Boolean(el.style && el.classList);
+}
+
+function describeEl(el) {
+  if (!isDomElement(el)) return String(el);
+  const tag = (el.tagName || '').toLowerCase() || 'element';
+  const id = el.id ? `#${el.id}` : '';
+  const clsRaw = typeof el.className === 'string' ? el.className : '';
+  const cls = clsRaw
+    .trim()
+    .split(/\s+/g)
+    .filter(Boolean)
+    .slice(0, 6)
+    .join('.');
+  const clsPart = cls ? `.${cls}` : '';
+  return `${tag}${id}${clsPart}`;
+}
+
+function getDataVAttrName(el) {
+  if (!isDomElement(el)) return null;
+  try {
+    for (const name of el.getAttributeNames()) {
+      if (name.startsWith('data-v-')) return name;
+    }
+  } catch { }
+  return null;
+}
+
+function getElDebugInfo(el) {
+  if (!isStyleableElement(el)) return null;
+  let cs = null;
+  try { cs = getComputedStyle(el); } catch { }
+  let rect = null;
+  try {
+    const r = el.getBoundingClientRect();
+    rect = { w: Math.round(r.width), h: Math.round(r.height) };
+  } catch { }
+
+  const scriptId = el.closest?.('[script_id]')?.getAttribute?.('script_id') || null;
+  const dataV = getDataVAttrName(el);
+
+  return {
+    el: describeEl(el),
+    isConnected: Boolean(el.isConnected),
+    scriptId,
+    dataV,
+    className: String(el.className || ''),
+    style: {
+      display: el.style.display || '',
+      height: el.style.height || '',
+      maxHeight: el.style.maxHeight || '',
+      overflow: el.style.overflow || '',
+      opacity: el.style.opacity || '',
+      transform: el.style.transform || '',
+    },
+    computed: cs ? {
+      display: cs.display,
+      visibility: cs.visibility,
+      opacity: cs.opacity,
+      transform: cs.transform,
+      height: cs.height,
+      maxHeight: cs.maxHeight,
+      overflow: cs.overflow,
+      overflowY: cs.overflowY,
+    } : null,
+    rect,
+    scrollHeight: Number(el.scrollHeight || 0),
+    clientHeight: Number(el.clientHeight || 0),
+  };
+}
+
+function shouldTraceEl(el) {
+  if (!_settings?.debugLog) return false;
+  if (!isDomElement(el)) return false;
+  // Prioritize extension settings & script-injected blocks (script_id wrapper is common).
+  if (el.closest?.('#extensions_settings2, #extensions_settings')) return true;
+  if (el.closest?.('[script_id]')) return true;
+  if (el.matches?.('.inline-drawer-content, .drawer-content')) return true;
+  return false;
+}
+
+function isEffectivelyHidden(el) {
+  if (!isStyleableElement(el)) return true;
+  try {
+    const cs = getComputedStyle(el);
+    if (cs.display === 'none') return true;
+    if (cs.visibility === 'hidden') return true;
+    const rh = el.getBoundingClientRect().height;
+    const sh = el.scrollHeight;
+    // Consider "collapsed to 0 height" as hidden (some UIs keep display:block but animate height).
+    if (rh <= 1 && sh > 2) return true;
+    return false;
+  } catch {
+    return true;
+  }
+}
+
 function parseJqAnimArgs(args) {
   let durationMs = null;
   /** @type {Function | null} */
@@ -233,11 +337,11 @@ function parseJqAnimArgs(args) {
 }
 
 function rememberDisplay(el) {
-  if (!(el instanceof HTMLElement)) return;
+  if (!isStyleableElement(el)) return;
   try {
     const d = getComputedStyle(el).display;
     if (d && d !== 'none') {
-      el.dataset.stUaoDisplay = d;
+      if (el.dataset) el.dataset.stUaoDisplay = d;
     }
   } catch { }
 }
@@ -249,15 +353,41 @@ function getDisplayForShow(el) {
 }
 
 function showFast(el, durationMs, complete) {
-  if (!(el instanceof HTMLElement)) return;
+  if (!isStyleableElement(el)) return;
   cleanupAnim(el);
+
+  if (shouldTraceEl(el)) {
+    logDebug('jq.showFast:before', getElDebugInfo(el));
+  }
 
   el.classList.add('st-uao-slide');
   el.style.setProperty('--st-uao-slide-duration', `${Math.max(0, durationMs)}ms`);
 
+  // Some UIs (or interrupted jQuery slide* animations) may leave an element stuck at height:0/overflow:hidden.
+  // Our compositor-only animation won't "grow" height, so make sure we release those constraints.
+  try {
+    const h = Number.parseFloat(String(el.style.height || ''));
+    if (Number.isFinite(h) && h <= 1) el.style.height = '';
+    const mh = Number.parseFloat(String(el.style.maxHeight || ''));
+    if (Number.isFinite(mh) && mh <= 1) el.style.maxHeight = '';
+    if (el.style.overflow === 'hidden') el.style.overflow = '';
+  } catch { }
+
   // Ensure we start from the "closed" visual state, then animate to open.
   el.classList.remove('st-uao-open');
   el.style.display = getDisplayForShow(el);
+
+  // If the element is still collapsed (height 0 but has scrollHeight), force it open for layout.
+  try {
+    const sh = el.scrollHeight;
+    const rh = el.getBoundingClientRect().height;
+    if (sh > 2 && rh <= 1) {
+      el.style.height = 'auto';
+      el.style.maxHeight = 'none';
+      const ov = getComputedStyle(el).overflow;
+      if (ov === 'hidden') el.style.overflow = '';
+    }
+  } catch { }
 
   // eslint-disable-next-line no-unused-expressions
   el.getBoundingClientRect();
@@ -269,13 +399,20 @@ function showFast(el, durationMs, complete) {
   state.timer = window.setTimeout(() => {
     cleanupAnim(el);
     try { complete?.call(el); } catch { }
+    if (shouldTraceEl(el)) {
+      logDebug('jq.showFast:after', getElDebugInfo(el));
+    }
   }, Math.max(0, durationMs) + 50);
   _contentAnimState.set(el, state);
 }
 
 function hideFast(el, durationMs, complete) {
-  if (!(el instanceof HTMLElement)) return;
+  if (!isStyleableElement(el)) return;
   cleanupAnim(el);
+
+  if (shouldTraceEl(el)) {
+    logDebug('jq.hideFast:before', getElDebugInfo(el));
+  }
 
   rememberDisplay(el);
 
@@ -302,6 +439,9 @@ function hideFast(el, durationMs, complete) {
     cleanupAnim(el);
     el.style.display = 'none';
     try { complete?.call(el); } catch { }
+    if (shouldTraceEl(el)) {
+      logDebug('jq.hideFast:after', getElDebugInfo(el));
+    }
   };
 
   const onEnd = (e) => {
@@ -329,22 +469,46 @@ function installJqSlidePatch() {
 
   $.fn.slideDown = function (...args) {
     const { durationMs, complete } = parseJqAnimArgs(args);
+    if (_settings?.debugLog) {
+      const first = this.get?.(0);
+      logDebug('jq.slideDown', { durationMs, count: this.length, first: getElDebugInfo(first) });
+    }
     this.each((_, el) => showFast(el, durationMs, complete));
     return this;
   };
 
   $.fn.slideUp = function (...args) {
     const { durationMs, complete } = parseJqAnimArgs(args);
+    if (_settings?.debugLog) {
+      const first = this.get?.(0);
+      logDebug('jq.slideUp', { durationMs, count: this.length, first: getElDebugInfo(first) });
+    }
     this.each((_, el) => hideFast(el, durationMs, complete));
     return this;
   };
 
   $.fn.slideToggle = function (...args) {
     const { durationMs, complete } = parseJqAnimArgs(args);
+    if (_settings?.debugLog) {
+      const first = this.get?.(0);
+      const stack = String(new Error('jq.slideToggle stack').stack || '').split('\n').slice(0, 10).join('\n');
+      logDebug('jq.slideToggle', { durationMs, count: this.length, first: getElDebugInfo(first), stack });
+    }
     this.each((_, el) => {
-      if (!(el instanceof HTMLElement)) return;
-      let hidden = false;
-      try { hidden = getComputedStyle(el).display === 'none'; } catch { hidden = true; }
+      if (!isStyleableElement(el)) {
+        if (_settings?.debugLog) {
+          logDebug('jq.slideToggle:skipNonElement', {
+            type: Object.prototype.toString.call(el),
+            nodeType: el?.nodeType,
+            el,
+          });
+        }
+        return;
+      }
+      const hidden = isEffectivelyHidden(el);
+      if (shouldTraceEl(el)) {
+        logDebug('jq.slideToggle:decide', { hidden, durationMs, info: getElDebugInfo(el) });
+      }
       if (hidden) showFast(el, durationMs, complete);
       else hideFast(el, durationMs, complete);
     });
@@ -412,7 +576,7 @@ function getCurrentWorldEditorName() {
 
 function getWorldEntryUidFromDrawer(drawerEl) {
   const entryEl = drawerEl.closest('.world_entry');
-  if (!(entryEl instanceof HTMLElement)) return null;
+  if (!isDomElement(entryEl)) return null;
   const uid = entryEl.getAttribute('uid') || entryEl.dataset.uid;
   return uid ? String(uid) : null;
 }
@@ -853,9 +1017,20 @@ function toggleInlineDrawerFast(drawerEl) {
   // Mark as managed so CSS rules only affect drawers we control.
   drawerEl.classList.add('st-uao-managed');
   const { content, icon } = findDrawerParts(drawerEl);
-  if (!(content instanceof HTMLElement)) return;
+  if (!isStyleableElement(content)) {
+    logDebug('toggleInlineDrawerFast: no content', { drawer: describeEl(drawerEl) });
+    return;
+  }
 
-  const isOpen = getComputedStyle(content).display !== 'none';
+  const isOpen = !isEffectivelyHidden(content);
+  if (_settings?.debugLog && drawerEl.closest?.('#extensions_settings2, #extensions_settings')) {
+    logDebug('ext.toggleInlineDrawerFast', {
+      drawer: describeEl(drawerEl),
+      isOpen,
+      title: String(drawerEl.querySelector(':scope > .inline-drawer-header')?.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 80),
+      content: getElDebugInfo(content),
+    });
+  }
   if (isOpen) {
     collapseInlineDrawer(drawerEl, content, icon);
   } else {
@@ -868,11 +1043,11 @@ function onClickCapture(e) {
   if (!_settings?.optimizeWorldInfoInlineDrawers) return;
 
   const target = e.target;
-  if (!(target instanceof Element)) return;
+  if (!isDomElement(target)) return;
 
   // Find the nearest inline-drawer toggle.
   const toggleEl = target.closest('.inline-drawer-toggle');
-  if (!(toggleEl instanceof HTMLElement)) return;
+  if (!isDomElement(toggleEl)) return;
   if (toggleEl.classList.contains('inline-drawer-maximize')) return;
   // Only intercept the entry chevron icon; avoid nested drawers inside editor.
   if (!toggleEl.classList.contains('inline-drawer-icon')) return;
@@ -885,7 +1060,7 @@ function onClickCapture(e) {
   if (isInteractiveTarget(target)) return;
 
   const drawerEl = toggleEl.closest('.inline-drawer');
-  if (!(drawerEl instanceof HTMLElement)) return;
+  if (!isDomElement(drawerEl)) return;
 
   // Prevent core delegated handler (jQuery slideToggle) from running.
   e.preventDefault();
@@ -913,9 +1088,9 @@ function getExtensionsSettingsHosts() {
   /** @type {HTMLElement[]} */
   const list = [];
   const el2 = document.getElementById('extensions_settings2');
-  if (el2 instanceof HTMLElement) list.push(el2);
+  if (isDomElement(el2)) list.push(el2);
   const el1 = document.getElementById('extensions_settings');
-  if (el1 instanceof HTMLElement && el1 !== el2) list.push(el1);
+  if (isDomElement(el1) && el1 !== el2) list.push(el1);
   return list;
 }
 
@@ -928,10 +1103,10 @@ function onExtensionsClick(e) {
   if (!_settings?.optimizeExtensionsInlineDrawers) return;
 
   const target = e.target;
-  if (!(target instanceof Element)) return;
+  if (!isDomElement(target)) return;
 
   const toggleEl = target.closest('.inline-drawer-toggle');
-  if (!(toggleEl instanceof HTMLElement)) return;
+  if (!isDomElement(toggleEl)) return;
   if (toggleEl.classList.contains('inline-drawer-maximize')) return;
 
   // Scope: only the extensions settings panel (avoid affecting other settings drawers).
@@ -941,7 +1116,28 @@ function onExtensionsClick(e) {
   if (isInteractiveTarget(target)) return;
 
   const drawerEl = toggleEl.closest('.inline-drawer');
-  if (!(drawerEl instanceof HTMLElement)) return;
+  if (!isDomElement(drawerEl)) return;
+
+  if (_settings?.debugLog) {
+    const contentEl = drawerEl.querySelector(':scope > .inline-drawer-content');
+    const title = String(toggleEl.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 80);
+    logDebug('ext.click:intercept', {
+      title,
+      target: describeEl(target),
+      toggle: describeEl(toggleEl),
+      drawer: describeEl(drawerEl),
+      content: getElDebugInfo(contentEl),
+    });
+    // Post-state after 2 frames (catches "re-render reverted it" issues)
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      const contentNow = drawerEl.querySelector(':scope > .inline-drawer-content');
+      logDebug('ext.click:after2f', {
+        title,
+        drawerClass: drawerEl.className,
+        content: getElDebugInfo(contentNow),
+      });
+    }));
+  }
 
   // Block the core delegated handler (jQuery slideToggle on document).
   e.preventDefault();

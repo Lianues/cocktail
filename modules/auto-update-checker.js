@@ -4,7 +4,7 @@
  * 目标：
  * - 进入主页面后，后台拉取远端 manifest.json 对比版本号
  * - 如果不是最新版本：弹出提示，让用户选择是否更新
- * - 用户选择更新：触发扩展管理器的 `.btn_update` 点击事件
+ * - 用户选择更新：直接调用酒馆的扩展更新 API（不模拟点击、不跳转界面），更新完成后刷新页面生效
  *
  * 说明：
  * - 不改酒馆源代码；仅通过前端扩展 JS 实现
@@ -39,6 +39,14 @@ function getCtx() {
 
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, Math.max(0, ms)));
+}
+
+function getRequestHeaders(ctx) {
+  try {
+    const headers = ctx?.getRequestHeaders?.();
+    if (headers && typeof headers === 'object') return headers;
+  } catch { }
+  return { 'Content-Type': 'application/json' };
 }
 
 function parseSemver(version) {
@@ -116,17 +124,6 @@ async function getLatestVersion() {
   return null;
 }
 
-async function waitUntil(predicate, timeoutMs = 15000, intervalMs = 120) {
-  const deadline = Date.now() + Math.max(0, timeoutMs);
-  while (Date.now() < deadline) {
-    try {
-      if (predicate()) return true;
-    } catch { }
-    await sleep(intervalMs);
-  }
-  return false;
-}
-
 function guessExternalId() {
   // From URL like: /scripts/extensions/third-party/<folder>/modules/...
   try {
@@ -143,50 +140,61 @@ function guessExternalId() {
   }
 }
 
-async function triggerUpdateViaBtnUpdate(externalId) {
-  if (!externalId) return false;
+function externalIdToDiscoverName(externalId) {
+  const folder = String(externalId || '').replace(/^\//, '').trim();
+  if (!folder) return null;
+  return `third-party/${folder}`;
+}
 
-  // Build a temporary DOM that matches the delegated selector:
-  // $(document).on('click', '.extensions_info .extension_block .btn_update', onUpdateClick)
-  // The element must be inside `.extensions_info .extension_block` for the handler to match.
-  const wrapper = document.createElement('div');
-  wrapper.className = 'extensions_info';
-  wrapper.style.display = 'none';
+async function discoverExtensionType(externalId, ctx) {
+  const name = externalIdToDiscoverName(externalId);
+  if (!name) return null;
 
-  const block = document.createElement('div');
-  block.className = 'extension_block';
-  block.dataset.name = externalId;
+  try {
+    const resp = await fetch('/api/extensions/discover', {
+      method: 'GET',
+      headers: getRequestHeaders(ctx),
+      cache: 'no-store',
+    });
+    if (!resp.ok) return null;
+    const list = await resp.json();
+    if (!Array.isArray(list)) return null;
 
-  const btn = document.createElement('button');
-  btn.className = 'btn_update menu_button displayNone interactable';
-  btn.dataset.name = externalId;
-  btn.title = 'Update available';
-  btn.tabIndex = 0;
-  btn.setAttribute('role', 'button');
-  btn.innerHTML = '<i class="fa-solid fa-download fa-fw"></i>';
-
-  block.appendChild(btn);
-  wrapper.appendChild(block);
-  document.body.appendChild(wrapper);
-
-  const icon = btn.querySelector('i');
-
-  // Dispatch click so it bubbles to delegated handlers
-  btn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
-
-  // Wait for spinner to start (best-effort)
-  const spinStarted = await waitUntil(() => icon?.classList?.contains('fa-spin') === true, 2000, 50);
-
-  // If spinner started, wait until it ends (updateExtension awaited)
-  if (spinStarted) {
-    await waitUntil(() => icon?.classList?.contains('fa-spin') === false, 180000, 250);
-  } else {
-    // Handler might still run without spinner (or not installed). Give it a short grace period.
-    await sleep(1500);
+    const hit = list.find((x) => x && typeof x === 'object' && x.name === name);
+    const type = hit?.type;
+    if (type === 'global' || type === 'local' || type === 'system') return type;
+    return null;
+  } catch {
+    return null;
   }
+}
 
-  try { wrapper.remove(); } catch { }
-  return true;
+async function updateExtensionViaApi(externalId, ctx) {
+  if (!externalId) return { ok: false, error: 'missing externalId' };
+
+  const type = await discoverExtensionType(externalId, ctx);
+  const isGlobal = type === 'global';
+
+  try {
+    const resp = await fetch('/api/extensions/update', {
+      method: 'POST',
+      headers: getRequestHeaders(ctx),
+      body: JSON.stringify({
+        extensionName: externalId,
+        global: isGlobal,
+      }),
+    });
+
+    if (!resp.ok) {
+      const text = await resp.text().catch(() => '');
+      return { ok: false, error: text || resp.statusText || String(resp.status) };
+    }
+
+    const data = await resp.json().catch(() => ({}));
+    return { ok: true, data };
+  } catch (e) {
+    return { ok: false, error: String(e?.message || e || 'network error') };
+  }
 }
 
 async function promptAndMaybeUpdate({ currentVersion, latestVersion }) {
@@ -208,7 +216,7 @@ async function promptAndMaybeUpdate({ currentVersion, latestVersion }) {
   try {
     if (Popup?.show?.confirm && POPUP_RESULT) {
       const result = await Popup.show.confirm(title, text, {
-        okButton: '更新',
+        okButton: '更新并刷新',
         cancelButton: '稍后',
       });
       shouldUpdate = result === POPUP_RESULT.AFFIRMATIVE;
@@ -226,8 +234,22 @@ async function promptAndMaybeUpdate({ currentVersion, latestVersion }) {
   // Prefer updating the current extension folder; fallback to known external id.
   const externalId = guessExternalId() || '/cocktail';
 
-  // Trigger update via extensions.js delegated handler
-  await triggerUpdateViaBtnUpdate(externalId);
+  const result = await updateExtensionViaApi(externalId, ctx);
+  if (!result?.ok) {
+    try {
+      globalThis.toastr?.error?.(String(result?.error || 'unknown error'), '扩展更新失败', { timeOut: 6000 });
+    } catch { }
+    return;
+  }
+
+  // 更新完成后刷新页面以应用新版本（按你的需求：简单稳）
+  try {
+    globalThis.toastr?.success?.('更新完成，页面即将刷新…', '鸡尾酒', { timeOut: 1200 });
+  } catch { }
+  await sleep(600);
+  try {
+    globalThis.location?.reload?.();
+  } catch { }
 }
 
 async function checkOnce() {
