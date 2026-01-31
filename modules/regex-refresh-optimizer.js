@@ -95,6 +95,120 @@ function saveSettings(ctx) {
   }
 }
 
+function hasRegexScriptManagerApi(engine) {
+  return Boolean(
+    engine
+    && engine.SCRIPT_TYPES
+    && typeof engine.getScriptsByType === 'function'
+    && typeof engine.saveScriptsByType === 'function'
+  );
+}
+
+function createLegacyRegexEngineCompat(baseEngine) {
+  // ST 1.13.x: `/scripts/extensions/regex/engine.js` only exposes runtime script runner,
+  // without script management helpers. Provide a minimal compat layer for this plugin.
+  const SCRIPT_TYPES = Object.freeze({ GLOBAL: 0, SCOPED: 1, PRESET: 2 });
+
+  const ensureArray = (value) => Array.isArray(value) ? value : [];
+
+  const getGlobalList = (ctx) => {
+    const es = ctx?.extensionSettings;
+    if (!es) return [];
+    if (!Array.isArray(es.regex)) es.regex = [];
+    return es.regex;
+  };
+
+  const getScopedList = (ctx) => {
+    if (!ctx?.characters) return [];
+    const chid = ctx.characterId;
+    if (chid === undefined || chid === null) return [];
+    const character = ctx.characters?.[chid];
+    if (!character) return [];
+    character.data = character.data || {};
+    character.data.extensions = character.data.extensions || {};
+    if (!Array.isArray(character.data.extensions.regex_scripts)) {
+      character.data.extensions.regex_scripts = [];
+    }
+    return character.data.extensions.regex_scripts;
+  };
+
+  const ensureAllowedList = (ctx) => {
+    const es = ctx?.extensionSettings;
+    if (!es) return null;
+    if (!Array.isArray(es.character_allowed_regex)) es.character_allowed_regex = [];
+    return es.character_allowed_regex;
+  };
+
+  const allowScopedScripts = (character) => {
+    const ctx = getCtx();
+    if (!ctx) return;
+    const allowed = ensureAllowedList(ctx);
+    if (!allowed) return;
+    const avatar = character?.avatar ?? ctx.characters?.[ctx.characterId]?.avatar;
+    if (!avatar) return;
+    if (!allowed.includes(avatar)) allowed.push(avatar);
+  };
+
+  const disallowScopedScripts = (character) => {
+    const ctx = getCtx();
+    if (!ctx) return;
+    const allowed = ensureAllowedList(ctx);
+    if (!allowed) return;
+    const avatar = character?.avatar ?? ctx.characters?.[ctx.characterId]?.avatar;
+    if (!avatar) return;
+    const idx = allowed.indexOf(avatar);
+    if (idx !== -1) allowed.splice(idx, 1);
+  };
+
+  return {
+    ...baseEngine,
+    SCRIPT_TYPES,
+    getScriptsByType(type) {
+      const ctx = getCtx();
+      if (!ctx) return [];
+      if (type === SCRIPT_TYPES.GLOBAL) return getGlobalList(ctx);
+      if (type === SCRIPT_TYPES.SCOPED) return getScopedList(ctx);
+      if (type === SCRIPT_TYPES.PRESET) return [];
+      return [];
+    },
+    async saveScriptsByType(list, type) {
+      const ctx = getCtx();
+      if (!ctx) return;
+      const next = ensureArray(list);
+      if (type === SCRIPT_TYPES.GLOBAL) {
+        if (ctx.extensionSettings) ctx.extensionSettings.regex = next;
+        return;
+      }
+      if (type === SCRIPT_TYPES.SCOPED) {
+        const chid = ctx.characterId;
+        if (chid === undefined || chid === null) return;
+        // Persist into character card data (matches core behavior)
+        try {
+          await ctx.writeExtensionField?.(chid, 'regex_scripts', next);
+        } catch (e) {
+          console.warn(`[${EXTENSION_NAME}] writeExtensionField(regex_scripts) failed`, e);
+        }
+        try {
+          const character = ctx.characters?.[chid];
+          if (character) {
+            character.data = character.data || {};
+            character.data.extensions = character.data.extensions || {};
+            character.data.extensions.regex_scripts = next;
+          }
+        } catch { }
+        return;
+      }
+      // PRESET not available in ST 1.13.x
+    },
+    allowScopedScripts,
+    disallowScopedScripts,
+    allowPresetScripts: () => { },
+    disallowPresetScripts: () => { },
+    getCurrentPresetAPI: () => null,
+    getCurrentPresetName: () => null,
+  };
+}
+
 async function importRegexEngine() {
   if (_engine) return _engine;
   if (_enginePromise) return _enginePromise;
@@ -103,7 +217,9 @@ async function importRegexEngine() {
     try {
       // ESM dynamic import
       const mod = await import('/scripts/extensions/regex/engine.js');
-      return mod;
+      if (!mod) return null;
+      if (hasRegexScriptManagerApi(mod)) return mod;
+      return createLegacyRegexEngineCompat(mod);
     } catch (e) {
       console.warn(`[${EXTENSION_NAME}] Regex engine import failed`, e);
       return null;
@@ -176,7 +292,7 @@ function findScriptAcrossTypes(engine, scriptId) {
 }
 
 async function setScriptDisabled(scriptId, scriptTypeMaybe, disabled) {
-  const ctx = _ctx || getCtx();
+  const ctx = getCtx();
   if (!ctx) return;
   const engine = await importRegexEngine();
   if (!engine) return;
@@ -232,7 +348,7 @@ function getSelectedScriptLabelElements() {
 }
 
 async function bulkSetDisabled({ enable }) {
-  const ctx = _ctx || getCtx();
+  const ctx = getCtx();
   if (!ctx) return;
   const engine = await importRegexEngine();
   if (!engine) return;
@@ -299,7 +415,7 @@ async function bulkSetDisabled({ enable }) {
 }
 
 async function confirmUi(message, title = '确认') {
-  const ctx = _ctx || getCtx();
+  const ctx = getCtx();
   try {
     const Popup = ctx?.Popup;
     if (Popup?.show?.confirm) {
@@ -348,7 +464,7 @@ function syncScriptLabelUi(scriptLabelEl, script) {
 }
 
 async function openRegexEditorForScript({ scriptId, scriptTypeMaybe, scriptLabelEl }) {
-  const ctx = _ctx || getCtx();
+  const ctx = getCtx();
   if (!ctx) return;
 
   const engine = await importRegexEngine();
@@ -576,7 +692,7 @@ async function openRegexEditorForScript({ scriptId, scriptTypeMaybe, scriptLabel
 }
 
 async function deleteScriptsByIds(idsByType) {
-  const ctx = _ctx || getCtx();
+  const ctx = getCtx();
   if (!ctx) return;
   const engine = await importRegexEngine();
   if (!engine) return;
@@ -602,7 +718,7 @@ async function deleteScriptsByIds(idsByType) {
 }
 
 async function moveScriptsToType({ ids, toType }) {
-  const ctx = _ctx || getCtx();
+  const ctx = getCtx();
   if (!ctx) return;
   const engine = await importRegexEngine();
   if (!engine) return;
@@ -714,7 +830,7 @@ function syncUiList(containerSelector, scripts) {
 }
 
 async function applyPresetById(presetId) {
-  const ctx = _ctx || getCtx();
+  const ctx = getCtx();
   if (!ctx) return;
   const engine = await importRegexEngine();
   if (!engine) return;
@@ -771,7 +887,7 @@ async function applyPresetById(presetId) {
 }
 
 async function applyScopedPresetAllowToggle({ kind, enabled }) {
-  const ctx = _ctx || getCtx();
+  const ctx = getCtx();
   if (!ctx) return;
   const engine = await importRegexEngine();
   if (!engine) return;
@@ -861,7 +977,7 @@ function rerenderDisplayedMessagesChunked(ctx, batchSize) {
 }
 
 async function refreshChatOnce() {
-  const ctx = _ctx || getCtx();
+  const ctx = getCtx();
   if (!ctx) return;
 
   const mode = _settings?.refreshMode ?? DEFAULT_SETTINGS.refreshMode;
@@ -998,7 +1114,7 @@ async function tryInstallSortablePatch() {
           pushed.add(s.id);
         }
         await engine.saveScriptsByType(newList, type);
-        saveSettings(_ctx || getCtx());
+        saveSettings(getCtx());
         markDirty();
       });
       _patchedSortableSelectors.add(selector);
