@@ -739,3 +739,68 @@ body.st-uao-wi-cv #WorldInfo #world_popup_entries_list .world_entry .inline-draw
   }
 }
 
+/* -------------------------------------------------------------------------- */
+/* st-worldinfo-drag-optimizer */
+/* -------------------------------------------------------------------------- */
+
+/* Lightweight drag helper (compositor-friendly) */
+body.st-wido-enabled .st-wio-helper {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+
+  padding: 8px 10px;
+  border-radius: 12px;
+  border: 1px solid var(--SmartThemeBorderColor);
+  background: rgba(0, 0, 0, 0.55);
+  color: inherit;
+
+  font-weight: 700;
+  font-size: 12px;
+  line-height: 1.2;
+
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+
+  pointer-events: none;
+  user-select: none;
+
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.35);
+
+  will-change: transform, opacity;
+}
+
+/* Drag ghost is positioned via transform (JS) */
+body.st-wido-enabled .st-wio-drag-ghost {
+  position: fixed;
+  left: 0;
+  top: 0;
+}
+
+/* Drop indicator line (fixed, spans the list width) */
+body.st-wido-enabled .st-wio-drop-indicator {
+  position: fixed;
+  height: 3px;
+  border-radius: 999px;
+  background: var(--SmartThemeQuoteColor);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.25);
+  pointer-events: none;
+  user-select: none;
+}
+
+/* Placeholder: keep list stable & visible */
+body.st-wido-enabled #WorldInfo #world_popup_entries_list .st-wio-placeholder {
+  border: 1px dashed var(--SmartThemeBorderColor);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.06);
+  box-sizing: border-box;
+  visibility: visible !important;
+}
+
+body.st-wido-enabled #WorldInfo #world_popup_entries_list .st-wio-placeholder * {
+  visibility: hidden !important;
+}
+
