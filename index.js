@@ -17,11 +17,12 @@ import './core/panel.js';
 import './modules/startup-optimizer.js';
 import './modules/chat-render-optimizer.js';
 import './modules/regex-refresh-optimizer.js';
-import './modules/preset-panel-optimizer.js';
+import './modules/preset-drag-optimizer.js';
 import './modules/chat-saving-unblocker.js';
 import './modules/auto-update-checker.js';
 import './modules/ui-animation-optimizer.js';
 import './modules/worldinfo-drag-optimizer.js';
 import './modules/regex-drag-optimizer.js';
+import './modules/worldinfo-panel-slim.js';
 // import './modules/html-render-cache.js';
 // 暂时不再使用，避免bug

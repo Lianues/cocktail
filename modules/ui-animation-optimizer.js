@@ -20,7 +20,6 @@ const DEFAULT_SETTINGS = Object.freeze({
   optimizeTopDrawers: true,
   optimizeJquerySlideAnimations: true,
   optimizeExtensionsInlineDrawers: true,
-  optimizeWorldInfoInlineDrawers: true,
   enableWorldInfoContentVisibility: false, // experimental
   disableDrawerBlur: false,
 
@@ -51,8 +50,10 @@ let _jqSlideOriginal = null;
 /** @type {boolean} */
 let _jqSlidePatched = false;
 
-/** @type {WeakMap<HTMLElement, { timer: number|null; onEnd: ((e: TransitionEvent) => void) | null; }>} */
+/** @type {WeakMap<HTMLElement, { timer: number|null; onEnd: ((e: TransitionEvent) => void) | null; idleId: number|null; idleKind: 'ric'|'timeout'|null; }>} */
 const _contentAnimState = new WeakMap();
+
+const WI_FIRST_OPEN_IMMEDIATE_GRACE_MS = 120;
 
 /** @type {Map<number, number>} */
 const _wiReserveHeightByWidthKey = new Map();
@@ -109,7 +110,6 @@ function ensureExtensionSettings(ctx) {
   s.optimizeTopDrawers = clampBool(s.optimizeTopDrawers, DEFAULT_SETTINGS.optimizeTopDrawers);
   s.optimizeJquerySlideAnimations = clampBool(s.optimizeJquerySlideAnimations, DEFAULT_SETTINGS.optimizeJquerySlideAnimations);
   s.optimizeExtensionsInlineDrawers = clampBool(s.optimizeExtensionsInlineDrawers, DEFAULT_SETTINGS.optimizeExtensionsInlineDrawers);
-  s.optimizeWorldInfoInlineDrawers = clampBool(s.optimizeWorldInfoInlineDrawers, DEFAULT_SETTINGS.optimizeWorldInfoInlineDrawers);
   s.enableWorldInfoContentVisibility = clampBool(s.enableWorldInfoContentVisibility, DEFAULT_SETTINGS.enableWorldInfoContentVisibility);
   s.disableDrawerBlur = clampBool(s.disableDrawerBlur, DEFAULT_SETTINGS.disableDrawerBlur);
   s.debugLog = clampBool(s.debugLog, DEFAULT_SETTINGS.debugLog);
@@ -134,7 +134,6 @@ function applyBodyClasses() {
   body.classList.toggle('st-uao-top-drawer', enabled && Boolean(_settings?.optimizeTopDrawers));
   body.classList.toggle('st-uao-jq-slide', enabled && Boolean(_settings?.optimizeJquerySlideAnimations));
   body.classList.toggle('st-uao-ext-inline', enabled && Boolean(_settings?.optimizeExtensionsInlineDrawers));
-  body.classList.toggle('st-uao-wi-inline', enabled && Boolean(_settings?.optimizeWorldInfoInlineDrawers));
   body.classList.toggle('st-uao-wi-cv', enabled && Boolean(_settings?.enableWorldInfoContentVisibility));
   body.classList.toggle('st-uao-no-blur', enabled && Boolean(_settings?.disableDrawerBlur));
 }
@@ -184,6 +183,19 @@ function cleanupAnim(contentEl) {
   if (s.onEnd) {
     contentEl.removeEventListener('transitionend', s.onEnd);
     s.onEnd = null;
+  }
+  if (s.idleId !== null) {
+    if (s.idleKind === 'ric' && typeof window.cancelIdleCallback === 'function') {
+      try {
+        window.cancelIdleCallback(s.idleId);
+      } catch { }
+    } else {
+      try {
+        clearTimeout(s.idleId);
+      } catch { }
+    }
+    s.idleId = null;
+    s.idleKind = null;
   }
 }
 
@@ -892,60 +904,98 @@ function expandInlineDrawer(drawerEl, contentEl, iconEl) {
   });
 
   if (isTopOutlet && !initialized) {
-    const delayMs = getMaxTransitionMs(contentEl) + 30;
-    const state = { timer: null, onEnd: null };
+    const immediateBuild = _settings?.wiFirstOpenBuildMode === 'immediate';
+    const delayMs = immediateBuild
+      ? WI_FIRST_OPEN_IMMEDIATE_GRACE_MS
+      : (getMaxTransitionMs(contentEl) + 30);
+    const state = { timer: null, onEnd: null, idleId: null, idleKind: null };
+    _contentAnimState.set(contentEl, state);
     state.timer = window.setTimeout(() => {
-      state.timer = null;
-      const widthKeyPx = getWorldInfoWidthKeyPx(drawerEl);
+      const buildInIdle = Boolean(_settings?.wiFirstOpenBuildUseIdle);
+      const runBuild = () => {
+        state.timer = null;
+        if (!drawerEl.classList.contains('st-uao-open')) return;
+        logDebug('wi.first-open-build', {
+          mode: immediateBuild ? 'immediate' : 'after_animation',
+          delayMs,
+          graceMs: immediateBuild ? WI_FIRST_OPEN_IMMEDIATE_GRACE_MS : 0,
+          idle: buildInIdle,
+        });
 
-      // 触发真正的重内容构建（同步，可能会卡一下，但动画已结束，且用户已看到位移+loading）
-      dispatchInlineDrawerToggle(drawerEl);
+        const widthKeyPx = getWorldInfoWidthKeyPx(drawerEl);
 
-      // 构建完成后移除 loading
-      clearLoadingPlaceholder(contentEl);
+        // 触发真正的重内容构建（同步，可能会卡一下，但动画已结束，且用户已看到位移+loading）
+        dispatchInlineDrawerToggle(drawerEl);
 
-      // 尽量把“最终高度”校准到真实高度，供后续展开直接占位（避免二次位移）
-      try {
-        const reservePx = Number(contentEl.dataset.stUaoReserveHeight) || 0;
-        const natural = measureNaturalContentHeight(contentEl);
-        if (natural > 80) {
-          _wiReserveHeightByWidthKey.set(widthKeyPx, natural);
+        // 构建完成后移除 loading
+        clearLoadingPlaceholder(contentEl);
 
-          // If content is larger than reserve, expand immediately to avoid clipping.
-          if (natural > reservePx) {
-            contentEl.style.height = `${natural}px`;
-          }
+        // 尽量把“最终高度”校准到真实高度，供后续展开直接占位（避免二次位移）
+        try {
+          const reservePx = Number(contentEl.dataset.stUaoReserveHeight) || 0;
+          const natural = measureNaturalContentHeight(contentEl);
+          if (natural > 80) {
+            _wiReserveHeightByWidthKey.set(widthKeyPx, natural);
 
-          requestAnimationFrame(() => {
-            if (!drawerEl.classList.contains('st-uao-open')) return;
-            // Only release to auto when it would NOT shrink (avoid "回缩" after load).
-            if (natural >= reservePx) {
-              contentEl.style.height = '';
+            // If content is larger than reserve, expand immediately to avoid clipping.
+            if (natural > reservePx) {
+              contentEl.style.height = `${natural}px`;
             }
-            contentEl.style.overflow = '';
-          });
-        } else {
-          // fallback: keep behavior, but avoid getting stuck in reserved height
+
+            requestAnimationFrame(() => {
+              if (!drawerEl.classList.contains('st-uao-open')) return;
+              // 精简模式下 natural 往往远小于预留高度；若不释放会留下明显空白。
+              // 仅在“差距很小”时保留预留高度，避免轻微回缩抖动。
+              const gap = reservePx - natural;
+              const shouldReleaseHeight = (natural >= reservePx) || (gap >= 72);
+              if (shouldReleaseHeight) {
+                contentEl.style.height = '';
+                delete contentEl.dataset.stUaoReserveHeight;
+              }
+              contentEl.style.overflow = '';
+            });
+          } else {
+            // fallback: keep behavior, but avoid getting stuck in reserved height
+            requestAnimationFrame(() => {
+              if (drawerEl.classList.contains('st-uao-open')) {
+                contentEl.style.height = '';
+                delete contentEl.dataset.stUaoReserveHeight;
+                contentEl.style.overflow = '';
+              }
+            });
+          }
+        } catch {
           requestAnimationFrame(() => {
             if (drawerEl.classList.contains('st-uao-open')) {
               contentEl.style.height = '';
+              delete contentEl.dataset.stUaoReserveHeight;
               contentEl.style.overflow = '';
             }
           });
         }
-      } catch {
-        requestAnimationFrame(() => {
-          if (drawerEl.classList.contains('st-uao-open')) {
-            contentEl.style.height = '';
-            contentEl.style.overflow = '';
-          }
-        });
-      }
 
-      scheduleTextareaAutoHeight(contentEl);
-      touchWiEntryCache(drawerEl, contentEl);
+        scheduleTextareaAutoHeight(contentEl);
+        touchWiEntryCache(drawerEl, contentEl);
+      };
+
+      if (buildInIdle && typeof window.requestIdleCallback === 'function') {
+        state.idleKind = 'ric';
+        state.idleId = window.requestIdleCallback(() => {
+          state.idleId = null;
+          state.idleKind = null;
+          runBuild();
+        }, { timeout: 900 });
+      } else if (buildInIdle) {
+        state.idleKind = 'timeout';
+        state.idleId = window.setTimeout(() => {
+          state.idleId = null;
+          state.idleKind = null;
+          runBuild();
+        }, 0);
+      } else {
+        runBuild();
+      }
     }, delayMs);
-    _contentAnimState.set(contentEl, state);
   } else {
     // For already-initialized drawers:
     // - For WI entry editor, do NOT trigger `inline-drawer-toggle` (it schedules destroy timers).
@@ -960,12 +1010,28 @@ function expandInlineDrawer(drawerEl, contentEl, iconEl) {
 function collapseInlineDrawer(drawerEl, contentEl, iconEl) {
   cleanupAnim(contentEl);
 
+  const inEntries = isWorldInfoEntriesDrawer(drawerEl);
+  const isTopOutlet = inEntries && isWorldEntryTopDrawerContent(contentEl);
+
+  // 对 WI 顶层条目抽屉采用“立即收起”：
+  // - 不等待 opacity/transform 过渡结束
+  // - 可避免在内容很重时出现“点击后要等一会儿才真正收起”的体感
+  if (isTopOutlet) {
+    setInlineDrawerIcon(iconEl, false);
+    clearLoadingPlaceholder(contentEl);
+    drawerEl.classList.remove('st-uao-open');
+    contentEl.style.display = 'none';
+    contentEl.style.maxHeight = '';
+    contentEl.style.overflow = '';
+    contentEl.style.height = '';
+    touchWiEntryCache(drawerEl, contentEl);
+    return;
+  }
+
   setInlineDrawerIcon(iconEl, false);
   // IMPORTANT: WorldInfo entry editor uses `inline-drawer-toggle` to lazily build its heavy DOM.
   // If we delayed init (editor not built yet) and the user closes quickly, dispatching here would
   // incorrectly build the editor during close. So only dispatch when it's already initialized.
-  const inEntries = isWorldInfoEntriesDrawer(drawerEl);
-  const isTopOutlet = inEntries && isWorldEntryTopDrawerContent(contentEl);
   // For WI entry editor, never dispatch here (dispatch would schedule a destroy timer / destroy content).
   if (!isTopOutlet) dispatchInlineDrawerToggle(drawerEl);
   touchWiEntryCache(drawerEl, contentEl);
@@ -1040,7 +1106,6 @@ function toggleInlineDrawerFast(drawerEl) {
 
 function onClickCapture(e) {
   if (!_settings?.enabled) return;
-  if (!_settings?.optimizeWorldInfoInlineDrawers) return;
 
   const target = e.target;
   if (!isDomElement(target)) return;
@@ -1215,12 +1280,8 @@ function refreshRuntime() {
     uninstallJqSlidePatch();
   }
 
-  const wantInterceptor = Boolean(_settings?.enabled && _settings?.optimizeWorldInfoInlineDrawers);
-  if (wantInterceptor) {
-    installClickInterceptor();
-  } else {
-    uninstallClickInterceptor();
-  }
+  // 移除 WorldInfo 子面板展开优化（替换 slideToggle）
+  uninstallClickInterceptor();
 
   const wantExt = Boolean(_settings?.enabled && _settings?.optimizeExtensionsInlineDrawers);
   if (wantExt) {
@@ -1286,10 +1347,6 @@ function renderCocktailSettings(container, ctx) {
       </label>
     </div>
     <div class="st-uao-row">
-      <label title="仅对 WorldInfo（#WorldInfo）范围内的 inline-drawer 生效，避免影响其它面板。">
-        <input id="st_uao_optimizeWorldInfoInlineDrawers" type="checkbox">
-        WorldInfo 子面板展开优化（替换 slideToggle）
-      </label>
       <label title="实验性：对离开视口的条目跳过布局/绘制，条目很多时滚动更顺；若出现显示异常请关闭。">
         <input id="st_uao_enableWorldInfoContentVisibility" type="checkbox">
         WorldInfo 条目列表 content-visibility（实验）
@@ -1299,7 +1356,6 @@ function renderCocktailSettings(container, ctx) {
       <div>说明：</div>
       <div>- 顶部抽屉：移除 <code>height</code> 过渡，改为 <code>transform/opacity</code> 动画，减少打开时的 layout 抖动。</div>
       <div>- 全局 slide*：把 <code>slideToggle/slideDown/slideUp</code> 的“高度动画”替换为合成层动画，减少各类面板展开时的掉帧。</div>
-      <div>- WorldInfo 条目抽屉：点击后先“占位下移到位 + 动画 + 加载中”，动画结束再初始化重内容，避免展开过程掉帧。</div>
       <div>- 条目编辑器缓存：同一世界书内会自动缓存已打开过的条目编辑器；切换世界书会自动清空缓存。</div>
       <div>- 如果遇到某些抽屉无法正常展开/关闭，可先关闭本模块对应开关回退。</div>
     </div>
@@ -1312,7 +1368,6 @@ function renderCocktailSettings(container, ctx) {
   const $blur = /** @type {HTMLInputElement|null} */ (root.querySelector('#st_uao_disableDrawerBlur'));
   const $jqSlide = /** @type {HTMLInputElement|null} */ (root.querySelector('#st_uao_optimizeJqSlide'));
   const $extInline = /** @type {HTMLInputElement|null} */ (root.querySelector('#st_uao_optimizeExtensionsInlineDrawers'));
-  const $wiInline = /** @type {HTMLInputElement|null} */ (root.querySelector('#st_uao_optimizeWorldInfoInlineDrawers'));
   const $wiCv = /** @type {HTMLInputElement|null} */ (root.querySelector('#st_uao_enableWorldInfoContentVisibility'));
 
   const refreshUI = () => {
@@ -1325,7 +1380,6 @@ function renderCocktailSettings(container, ctx) {
     if ($blur) $blur.checked = Boolean(ss.disableDrawerBlur);
     if ($jqSlide) $jqSlide.checked = Boolean(ss.optimizeJquerySlideAnimations);
     if ($extInline) $extInline.checked = Boolean(ss.optimizeExtensionsInlineDrawers);
-    if ($wiInline) $wiInline.checked = Boolean(ss.optimizeWorldInfoInlineDrawers);
     if ($wiCv) $wiCv.checked = Boolean(ss.enableWorldInfoContentVisibility);
   };
 
@@ -1338,7 +1392,6 @@ function renderCocktailSettings(container, ctx) {
     if ($blur) ss.disableDrawerBlur = Boolean($blur.checked);
     if ($jqSlide) ss.optimizeJquerySlideAnimations = Boolean($jqSlide.checked);
     if ($extInline) ss.optimizeExtensionsInlineDrawers = Boolean($extInline.checked);
-    if ($wiInline) ss.optimizeWorldInfoInlineDrawers = Boolean($wiInline.checked);
     if ($wiCv) ss.enableWorldInfoContentVisibility = Boolean($wiCv.checked);
 
     _settings = ss;
@@ -1347,11 +1400,11 @@ function renderCocktailSettings(container, ctx) {
     refreshUI();
   };
 
-  [$enabled, $debug, $top, $blur, $jqSlide, $extInline, $wiInline, $wiCv].forEach((el) => el?.addEventListener('change', onChange));
+  [$enabled, $debug, $top, $blur, $jqSlide, $extInline, $wiCv].forEach((el) => el?.addEventListener('change', onChange));
   refreshUI();
 
   return () => {
-    [$enabled, $debug, $top, $blur, $jqSlide, $extInline, $wiInline, $wiCv].forEach((el) => el?.removeEventListener('change', onChange));
+    [$enabled, $debug, $top, $blur, $jqSlide, $extInline, $wiCv].forEach((el) => el?.removeEventListener('change', onChange));
   };
 }
 

@@ -868,3 +868,65 @@ body.st-rdo-enabled .regex_settings .regex-script-container .st-rdo-placeholder 
 body.st-rdo-enabled .regex_settings .regex-script-container .st-rdo-placeholder * {
   visibility: hidden !important;
 }
+
+
+/* -------------------------------------------------------------------------- */
+/* st-preset-drag-optimizer (PromptManager drag display) */
+/* -------------------------------------------------------------------------- */
+
+body.st-pdo-drag-enabled .st-pdo-helper {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+
+  padding: 8px 10px;
+  border-radius: 12px;
+  border: 1px solid var(--SmartThemeBorderColor);
+  background: rgba(0, 0, 0, 0.55);
+  color: inherit;
+
+  font-weight: 700;
+  font-size: 12px;
+  line-height: 1.2;
+
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+
+  pointer-events: none;
+  user-select: none;
+
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.35);
+}
+
+/* 指示线模式下，幽灵块走 fixed + transform */
+body.st-pdo-drag-enabled .st-pdo-drag-ghost {
+  position: fixed;
+  left: 0;
+  top: 0;
+}
+
+/* 指示线 */
+body.st-pdo-drag-enabled .st-pdo-drop-indicator {
+  position: fixed;
+  height: 3px;
+  border-radius: 999px;
+  background: var(--SmartThemeQuoteColor);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.25);
+  pointer-events: none;
+  user-select: none;
+}
+
+body.st-pdo-drag-enabled ul[id$="prompt_manager_list"] .st-pdo-placeholder {
+  border: 1px dashed var(--SmartThemeBorderColor);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.06);
+  box-sizing: border-box;
+  visibility: visible !important;
+}
+
+body.st-pdo-drag-enabled ul[id$="prompt_manager_list"] .st-pdo-placeholder * {
+  visibility: hidden !important;
+}
