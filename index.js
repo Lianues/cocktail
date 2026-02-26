@@ -101,6 +101,7 @@ import './modules/chat-saving-unblocker.js';
 import './modules/auto-update-checker.js';
 import './modules/ui-animation-optimizer.js';
 import './modules/worldinfo-drag-optimizer.js';
+import './modules/regex-drag-optimizer.js';
 import './modules/worldinfo-panel-slim.js';
 tryLoadVersionGatedModules();
 
