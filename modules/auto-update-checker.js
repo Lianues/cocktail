@@ -9,7 +9,7 @@
  * 说明：
  * - 不改酒馆源代码；仅通过前端扩展 JS 实现
  * - 远端 manifest 源：`https://github.com/Lianues/cocktail/blob/main/manifest.json`
- *   实际请求会优先使用支持 CORS/纯 JSON 的 raw 链接（并保留 blob 兼容尝试）
+ *   实际请求仅使用支持 CORS/纯 JSON 的 raw 链接
  */
 
 const EXTENSION_NAME = 'st-auto-update-checker';
@@ -98,11 +98,9 @@ function getLocalManifestUrl() {
 }
 
 function getRemoteManifestUrls() {
-  // User-provided URL (blob) + more reliable raw endpoints
+  // Keep only the most stable CORS-friendly endpoint to avoid blob CORS errors and redundant retries.
   return [
-    'https://github.com/Lianues/cocktail/blob/main/manifest.json?raw=1',
     'https://raw.githubusercontent.com/Lianues/cocktail/main/manifest.json',
-    'https://github.com/Lianues/cocktail/raw/main/manifest.json',
   ];
 }
 
