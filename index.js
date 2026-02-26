@@ -1,11 +1,6 @@
 /**
  * cocktail（综合优化插件）
- *
- * 目标：把以下三个插件合并为一个插件（但内部保持解耦，按模块拆分）：
- * - st-startup-optimizer
- * - st-chat-render-optimizer
- * - st-regex-refresh-optimizer
- *
+ * 
  * 说明：
  * - 酒馆会以 <script type="module"> 加载扩展脚本，因此这里使用 ES Module 的拆分方式即可，无需打包。
  * - 每个模块仍使用自己原本的 EXTENSION_NAME 作为 settings key，方便迁移/回滚。
@@ -20,11 +15,6 @@ const VERSION_GATED_MODULES = Object.freeze([
     key: 'regex-refresh',
     name: 'st-regex-refresh-optimizer',
     path: './modules/regex-refresh-optimizer.js',
-  },
-  {
-    key: 'regex-drag',
-    name: 'st-regex-drag-optimizer',
-    path: './modules/regex-drag-optimizer.js',
   },
 ]);
 const _versionGatedState = new Map(VERSION_GATED_MODULES.map((m) => [m.key, { finalized: false, loadingPromise: null }]));
