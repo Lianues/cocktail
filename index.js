@@ -14,10 +14,20 @@
 // 主鸡尾酒面板 + 子面板注册器
 import './core/panel.js';
 
-const REGEX_REFRESH_MIN_ST_VERSION = '1.14.0';
-
-let _regexRefreshFinalized = false;
-let _regexRefreshLoadPromise = null;
+const REGEX_MODULE_MIN_ST_VERSION = '1.14.0';
+const VERSION_GATED_MODULES = Object.freeze([
+  {
+    key: 'regex-refresh',
+    name: 'st-regex-refresh-optimizer',
+    path: './modules/regex-refresh-optimizer.js',
+  },
+  {
+    key: 'regex-drag',
+    name: 'st-regex-drag-optimizer',
+    path: './modules/regex-drag-optimizer.js',
+  },
+]);
+const _versionGatedState = new Map(VERSION_GATED_MODULES.map((m) => [m.key, { finalized: false, loadingPromise: null }]));
 
 function extractVersionString(input) {
   const raw = String(input ?? '').trim();
@@ -54,36 +64,44 @@ async function detectStVersion() {
   }
 }
 
-async function maybeLoadRegexRefreshOptimizer() {
-  if (_regexRefreshFinalized) return;
-  if (_regexRefreshLoadPromise) return _regexRefreshLoadPromise;
+async function maybeLoadVersionGatedModule(moduleDef) {
+  const state = _versionGatedState.get(moduleDef.key);
+  if (!state) return;
+  if (state.finalized) return;
+  if (state.loadingPromise) return state.loadingPromise;
 
-  _regexRefreshLoadPromise = (async () => {
+  state.loadingPromise = (async () => {
     const stVersion = await detectStVersion();
 
     // Version not ready yet -> keep waiting for a later retry hook.
     if (!stVersion) {
-      console.debug('[cocktail] ST version is not ready, postpone loading st-regex-refresh-optimizer');
+      console.debug(`[cocktail] ST version is not ready, postpone loading ${moduleDef.name}`);
       return;
     }
 
-    if (compareSemver(stVersion, REGEX_REFRESH_MIN_ST_VERSION) < 0) {
-      _regexRefreshFinalized = true;
-      console.info(`[cocktail] skip st-regex-refresh-optimizer on ST ${stVersion} (< ${REGEX_REFRESH_MIN_ST_VERSION})`);
+    if (compareSemver(stVersion, REGEX_MODULE_MIN_ST_VERSION) < 0) {
+      state.finalized = true;
+      console.info(`[cocktail] skip ${moduleDef.name} on ST ${stVersion} (< ${REGEX_MODULE_MIN_ST_VERSION})`);
       return;
     }
 
-    await import('./modules/regex-refresh-optimizer.js');
-    _regexRefreshFinalized = true;
+    await import(moduleDef.path);
+    state.finalized = true;
   })()
     .catch((e) => {
-      console.warn('[cocktail] failed to load st-regex-refresh-optimizer', e);
+      console.warn(`[cocktail] failed to load ${moduleDef.name}`, e);
     })
     .finally(() => {
-      _regexRefreshLoadPromise = null;
+      state.loadingPromise = null;
     });
 
-  return _regexRefreshLoadPromise;
+  return state.loadingPromise;
+}
+
+function tryLoadVersionGatedModules() {
+  for (const moduleDef of VERSION_GATED_MODULES) {
+    void maybeLoadVersionGatedModule(moduleDef);
+  }
 }
 
 import './modules/startup-optimizer.js';
@@ -93,18 +111,17 @@ import './modules/chat-saving-unblocker.js';
 import './modules/auto-update-checker.js';
 import './modules/ui-animation-optimizer.js';
 import './modules/worldinfo-drag-optimizer.js';
-import './modules/regex-drag-optimizer.js';
 import './modules/worldinfo-panel-slim.js';
-void maybeLoadRegexRefreshOptimizer();
+tryLoadVersionGatedModules();
 
 globalThis.jQuery?.(() => {
   // Retry when DOM is ready.
-  void maybeLoadRegexRefreshOptimizer();
+  tryLoadVersionGatedModules();
 
   // Retry again after APP_READY; by then version info is usually initialized.
   const ctx = globalThis.SillyTavern?.getContext?.();
   ctx?.eventSource?.on?.(ctx?.eventTypes?.APP_READY, () => {
-    void maybeLoadRegexRefreshOptimizer();
+    tryLoadVersionGatedModules();
   });
 });
 
