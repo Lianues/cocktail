@@ -373,12 +373,6 @@ body.st-cro-hide-code #chat .mes_reasoning pre.st-cro-code-expanded {
   cursor: auto;
 }
 
-/* Optional: Chromium/Electron only. Disabled by default, controlled by body class. */
-body.st-cro-cv #chat .mes {
-  content-visibility: auto;
-  contain-intrinsic-size: 1px 400px;
-}
-
 /* Ensure native scroll anchoring is enabled for prepend (default is auto, but make it explicit). */
 #chat {
   overflow-anchor: auto;
