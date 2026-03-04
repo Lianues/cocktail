@@ -45,6 +45,13 @@ let _extHostObserver = null;
 /** @type {boolean} */
 let _extHostObsRafPending = false;
 
+/** @type {boolean} */
+let _topColorPickerLayerFixInstalled = false;
+/** @type {number|null} */
+let _topColorPickerSyncTimer = null;
+/** @type {HTMLElement|null} */
+let _topColorPickerActiveHost = null;
+
 /** @type {{ slideToggle: any; slideUp: any; slideDown: any } | null} */
 let _jqSlideOriginal = null;
 /** @type {boolean} */
@@ -230,6 +237,167 @@ function isStyleableElement(el) {
   return Boolean(el.style && el.classList);
 }
 
+function isToolcoolColorPickerHost(el) {
+  return isDomElement(el) && String(el.tagName || '').toLowerCase() === 'toolcool-color-picker';
+}
+
+function isInTopThemeColorPickerBlock(el) {
+  return Boolean(el?.closest?.('#top-settings-holder #color-picker-block'));
+}
+
+function getTopThemeColorPickerHosts() {
+  /** @type {HTMLElement[]} */
+  const hosts = [];
+  document.querySelectorAll('#top-settings-holder #color-picker-block toolcool-color-picker').forEach((el) => {
+    if (isToolcoolColorPickerHost(el)) hosts.push(el);
+  });
+  return hosts;
+}
+
+function findTopThemeColorPickerByCid(cid) {
+  if (!cid) return null;
+  const hosts = getTopThemeColorPickerHosts();
+  for (const host of hosts) {
+    try {
+      if (String(host.cid ?? '') === String(cid)) return host;
+    } catch { }
+  }
+  return null;
+}
+
+function isToolcoolColorPickerOpen(host) {
+  if (!isToolcoolColorPickerHost(host)) return false;
+  try {
+    if (typeof host.opened === 'boolean') return host.opened;
+  } catch { }
+  try {
+    return Boolean(host.shadowRoot?.querySelector?.('toolcool-color-picker-popup'));
+  } catch { }
+  return false;
+}
+
+function clearTopThemePickerOpenClass(exceptHost = null) {
+  const hosts = getTopThemeColorPickerHosts();
+  for (const host of hosts) {
+    if (host === exceptHost) continue;
+    host.classList.remove('st-uao-tcp-open');
+  }
+}
+
+function markTopThemePickerOpen(host) {
+  if (!isToolcoolColorPickerHost(host)) return;
+  if (!isInTopThemeColorPickerBlock(host)) return;
+  clearTopThemePickerOpenClass(host);
+  host.classList.add('st-uao-tcp-open');
+  _topColorPickerActiveHost = host;
+}
+
+function clearTopThemePickerOpenState() {
+  clearTopThemePickerOpenClass(null);
+  if (_topColorPickerActiveHost?.classList) {
+    _topColorPickerActiveHost.classList.remove('st-uao-tcp-open');
+  }
+  _topColorPickerActiveHost = null;
+}
+
+function syncTopThemePickerOpenState() {
+  const hosts = getTopThemeColorPickerHosts();
+  if (hosts.length === 0) {
+    _topColorPickerActiveHost = null;
+    return;
+  }
+
+  let openHost = null;
+
+  if (
+    isToolcoolColorPickerHost(_topColorPickerActiveHost)
+    && _topColorPickerActiveHost.isConnected
+    && isToolcoolColorPickerOpen(_topColorPickerActiveHost)
+  ) {
+    openHost = _topColorPickerActiveHost;
+  }
+
+  if (!openHost) {
+    for (const host of hosts) {
+      if (!isToolcoolColorPickerOpen(host)) continue;
+      openHost = host;
+      // During rapid switching, prefer the host currently interacted with.
+      if (host.matches(':focus-within, :hover')) break;
+    }
+  }
+
+  if (openHost) {
+    markTopThemePickerOpen(openHost);
+  } else {
+    clearTopThemePickerOpenState();
+  }
+}
+
+function scheduleTopThemePickerSync() {
+  if (_topColorPickerSyncTimer !== null) return;
+  _topColorPickerSyncTimer = window.setTimeout(() => {
+    _topColorPickerSyncTimer = null;
+    if (!_topColorPickerLayerFixInstalled) return;
+    syncTopThemePickerOpenState();
+  }, 0);
+}
+
+function onTopThemePickerButtonClicked(e) {
+  if (!_settings?.enabled || !_settings?.optimizeTopDrawers) return;
+  const cid = e?.detail?.cid ? String(e.detail.cid) : '';
+  const host = findTopThemeColorPickerByCid(cid);
+  if (!host) {
+    scheduleTopThemePickerSync();
+    return;
+  }
+
+  // Promote immediately to avoid one-frame overlap during rapid switching.
+  markTopThemePickerOpen(host);
+
+  // Defer until all ToolCool listeners finish (they close sibling popups on the same event).
+  window.setTimeout(() => {
+    if (!_topColorPickerLayerFixInstalled) return;
+    if (!host.isConnected) {
+      scheduleTopThemePickerSync();
+      return;
+    }
+    if (isToolcoolColorPickerOpen(host)) {
+      markTopThemePickerOpen(host);
+    } else {
+      scheduleTopThemePickerSync();
+    }
+  }, 0);
+}
+
+function onTopThemePickerGlobalPointerOrKey(e) {
+  if (!_topColorPickerLayerFixInstalled) return;
+  const target = e?.target;
+  if (!_topColorPickerActiveHost && !isInTopThemeColorPickerBlock(target)) return;
+  scheduleTopThemePickerSync();
+}
+
+function installTopThemePickerLayerFix() {
+  if (_topColorPickerLayerFixInstalled) return;
+  document.addEventListener('tc-button-clicked', onTopThemePickerButtonClicked, false);
+  document.addEventListener('mousedown', onTopThemePickerGlobalPointerOrKey, true);
+  document.addEventListener('keydown', onTopThemePickerGlobalPointerOrKey, true);
+  _topColorPickerLayerFixInstalled = true;
+  scheduleTopThemePickerSync();
+}
+
+function uninstallTopThemePickerLayerFix() {
+  if (!_topColorPickerLayerFixInstalled) return;
+  document.removeEventListener('tc-button-clicked', onTopThemePickerButtonClicked, false);
+  document.removeEventListener('mousedown', onTopThemePickerGlobalPointerOrKey, true);
+  document.removeEventListener('keydown', onTopThemePickerGlobalPointerOrKey, true);
+  _topColorPickerLayerFixInstalled = false;
+  if (_topColorPickerSyncTimer !== null) {
+    clearTimeout(_topColorPickerSyncTimer);
+    _topColorPickerSyncTimer = null;
+  }
+  clearTopThemePickerOpenState();
+}
+
 function describeEl(el) {
   if (!isDomElement(el)) return String(el);
   const tag = (el.tagName || '').toLowerCase() || 'element';
@@ -410,6 +578,13 @@ function showFast(el, durationMs, complete) {
   const state = { timer: null, onEnd: null };
   state.timer = window.setTimeout(() => {
     cleanupAnim(el);
+
+    // Keep slide classes ephemeral: once fully shown, restore normal stacking/paint behavior.
+    // This avoids persistent stacking-context side effects (e.g. popups being covered by later rows).
+    el.classList.remove('st-uao-open');
+    el.classList.remove('st-uao-slide');
+    el.style.removeProperty('--st-uao-slide-duration');
+
     try { complete?.call(el); } catch { }
     if (shouldTraceEl(el)) {
       logDebug('jq.showFast:after', getElDebugInfo(el));
@@ -431,6 +606,10 @@ function hideFast(el, durationMs, complete) {
   let isHidden = false;
   try { isHidden = getComputedStyle(el).display === 'none'; } catch { isHidden = true; }
   if (isHidden) {
+    el.classList.remove('st-uao-open');
+    el.classList.remove('st-uao-slide');
+    el.style.removeProperty('--st-uao-slide-duration');
+
     try { complete?.call(el); } catch { }
     return;
   }
@@ -449,7 +628,12 @@ function hideFast(el, durationMs, complete) {
 
   const finish = () => {
     cleanupAnim(el);
+
     el.style.display = 'none';
+    el.classList.remove('st-uao-open');
+    el.classList.remove('st-uao-slide');
+    el.style.removeProperty('--st-uao-slide-duration');
+
     try { complete?.call(el); } catch { }
     if (shouldTraceEl(el)) {
       logDebug('jq.hideFast:after', getElDebugInfo(el));
@@ -1282,6 +1466,13 @@ function refreshRuntime() {
 
   // 移除 WorldInfo 子面板展开优化（替换 slideToggle）
   uninstallClickInterceptor();
+
+  const wantTopPickerLayerFix = Boolean(_settings?.enabled && _settings?.optimizeTopDrawers);
+  if (wantTopPickerLayerFix) {
+    installTopThemePickerLayerFix();
+  } else {
+    uninstallTopThemePickerLayerFix();
+  }
 
   const wantExt = Boolean(_settings?.enabled && _settings?.optimizeExtensionsInlineDrawers);
   if (wantExt) {

@@ -488,7 +488,7 @@ body.st-cro-hide-code #chat .mes_reasoning pre.st-cro-code-expanded {
   }
   to {
     opacity: 1;
-    transform: translateY(0);
+    transform: none;
   }
 }
 
@@ -501,7 +501,32 @@ body.st-uao-top-drawer #top-settings-holder .drawer-content {
 
 body.st-uao-top-drawer #top-settings-holder .drawer-content.openDrawer {
   animation: st-uao-topDrawerIn var(--animation-duration-2x) ease both;
-  will-change: transform, opacity;
+  /* Avoid persistent stacking-context side effects (e.g. color picker popup layering). */
+  will-change: opacity;
+}
+
+/* Keep Theme Colors popups above subsequent settings rows in top drawers.
+   (ToolCool popup lives in Shadow DOM; lifting the host container is the most reliable fix.) */
+body.st-uao-top-drawer #top-settings-holder .inline-drawer-content:has(#color-picker-block) {
+  position: relative;
+  z-index: 10;
+}
+
+body.st-uao-top-drawer #top-settings-holder #color-picker-block {
+  position: relative;
+  /* keep picker z-index arbitration local, avoid cross-row flicker during fast switching */
+  isolation: isolate;
+}
+
+body.st-uao-top-drawer #top-settings-holder #color-picker-block toolcool-color-picker {
+  position: relative;
+  z-index: 1;
+}
+
+/* Within the color block, ensure the currently interacted picker is above sibling swatches,
+   otherwise old rows may visually cover the popup panel. */
+body.st-uao-top-drawer #top-settings-holder #color-picker-block toolcool-color-picker.st-uao-tcp-open {
+  z-index: 30;
 }
 
 /* Disable height/display transitions for ALL drawer-content (PromptManager popup etc). */
@@ -528,7 +553,7 @@ body.st-uao-jq-slide .st-uao-slide:not(.st-uao-open) {
 
 body.st-uao-jq-slide .st-uao-slide.st-uao-open {
   opacity: 1;
-  transform: translateY(0);
+  transform: none;
   pointer-events: auto;
 }
 
@@ -557,7 +582,7 @@ body.st-uao-wi-inline #WorldInfo #world_popup_entries_list .inline-drawer.st-uao
 
 body.st-uao-wi-inline #WorldInfo #world_popup_entries_list .inline-drawer.st-uao-managed.st-uao-open > .inline-drawer-content {
   opacity: 1;
-  transform: translateY(0);
+  transform: none;
   pointer-events: auto;
 }
 
@@ -593,7 +618,7 @@ body.st-uao-ext-inline #extensions_settings .inline-drawer.st-uao-managed:not(.s
 body.st-uao-ext-inline #extensions_settings2 .inline-drawer.st-uao-managed.st-uao-open > .inline-drawer-content,
 body.st-uao-ext-inline #extensions_settings .inline-drawer.st-uao-managed.st-uao-open > .inline-drawer-content {
   opacity: 1;
-  transform: translateY(0);
+  transform: none;
   pointer-events: auto;
 }
 

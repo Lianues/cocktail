@@ -29,12 +29,60 @@ const STATE = {
   promptedThisSession: false,
 };
 
+const DEFAULT_SETTINGS = Object.freeze({
+  skippedVersion: '',
+});
+
 function getCtx() {
   try {
     return globalThis.SillyTavern?.getContext?.() ?? null;
   } catch {
     return null;
   }
+}
+
+function normalizeVersionString(version) {
+  return String(version ?? '').trim();
+}
+
+function ensureExtensionSettings(ctx) {
+  const root = ctx?.extensionSettings;
+  if (!root || typeof root !== 'object') return null;
+
+  root[EXTENSION_NAME] = root[EXTENSION_NAME] || {};
+  const s = root[EXTENSION_NAME];
+
+  for (const [k, v] of Object.entries(DEFAULT_SETTINGS)) {
+    if (s[k] === undefined) s[k] = v;
+  }
+
+  s.skippedVersion = normalizeVersionString(s.skippedVersion);
+  return s;
+}
+
+function saveSettings(ctx) {
+  try {
+    ctx?.saveSettingsDebounced?.();
+  } catch { }
+}
+
+function getSkippedVersion(ctx) {
+  const s = ensureExtensionSettings(ctx);
+  const v = normalizeVersionString(s?.skippedVersion);
+  return v || null;
+}
+
+function setSkippedVersion(ctx, version) {
+  const s = ensureExtensionSettings(ctx);
+  if (!s) return;
+  const next = normalizeVersionString(version);
+  if (s.skippedVersion === next) return;
+  s.skippedVersion = next;
+  saveSettings(ctx);
+}
+
+function clearSkippedVersion(ctx) {
+  setSkippedVersion(ctx, '');
 }
 
 function sleep(ms) {
@@ -195,13 +243,14 @@ async function updateExtensionViaApi(externalId, ctx) {
   }
 }
 
-async function promptAndMaybeUpdate({ currentVersion, latestVersion }) {
+async function promptAndMaybeUpdate({ currentVersion, latestVersion, ctx }) {
   if (STATE.promptedThisSession) return;
   STATE.promptedThisSession = true;
 
-  const ctx = getCtx();
-  const Popup = ctx?.Popup;
-  const POPUP_RESULT = ctx?.POPUP_RESULT;
+  const runtimeCtx = ctx ?? getCtx();
+  const Popup = runtimeCtx?.Popup;
+  const POPUP_RESULT = runtimeCtx?.POPUP_RESULT;
+  const SKIP_RESULT = Number(POPUP_RESULT?.CUSTOM1 ?? 1001);
 
   const title = '【鸡尾酒】发现新版本';
   const text =
@@ -209,30 +258,50 @@ async function promptAndMaybeUpdate({ currentVersion, latestVersion }) {
     `最新版本：${latestVersion}\n\n` +
     `是否现在更新？`;
 
-  // Fallback: native confirm
-  let shouldUpdate = false;
+  let action = 'later'; // 'update' | 'skip' | 'later'
   try {
     if (Popup?.show?.confirm && POPUP_RESULT) {
       const result = await Popup.show.confirm(title, text, {
         okButton: '更新并刷新',
         cancelButton: '稍后',
+        customButtons: [
+          {
+            text: '跳过此版本',
+            result: SKIP_RESULT,
+            appendAtEnd: true,
+          },
+        ],
+        defaultResult: POPUP_RESULT.NEGATIVE,
       });
-      shouldUpdate = result === POPUP_RESULT.AFFIRMATIVE;
+      if (result === POPUP_RESULT.AFFIRMATIVE) {
+        action = 'update';
+      } else if (result === SKIP_RESULT) {
+        action = 'skip';
+      }
     } else {
-      shouldUpdate = globalThis.confirm(`${title}\n\n${text}`);
+      action = globalThis.confirm(`${title}\n\n${text}`) ? 'update' : 'later';
     }
   } catch {
-    shouldUpdate = false;
+    action = 'later';
   }
 
-  if (!shouldUpdate) {
+  if (action === 'skip') {
+    setSkippedVersion(runtimeCtx, latestVersion);
+    try {
+      globalThis.toastr?.info?.(`已跳过 ${latestVersion}，此版本将不再提醒。`, '鸡尾酒', { timeOut: 2500 });
+    } catch { }
+    return;
+  }
+
+  if (action !== 'update') {
     return;
   }
 
   // Prefer updating the current extension folder; fallback to known external id.
   const externalId = guessExternalId() || '/cocktail';
+  clearSkippedVersion(runtimeCtx);
 
-  const result = await updateExtensionViaApi(externalId, ctx);
+  const result = await updateExtensionViaApi(externalId, runtimeCtx);
   if (!result?.ok) {
     try {
       globalThis.toastr?.error?.(String(result?.error || 'unknown error'), '扩展更新失败', { timeOut: 6000 });
@@ -255,6 +324,9 @@ async function checkOnce() {
   STATE.checking = true;
 
   try {
+    const ctx = getCtx();
+    ensureExtensionSettings(ctx);
+
     const currentVersion = await getCurrentVersion();
     if (!currentVersion) return;
 
@@ -264,7 +336,16 @@ async function checkOnce() {
 
     // latest > current ?
     if (compareSemver(latestVersion, currentVersion) > 0) {
-      await promptAndMaybeUpdate({ currentVersion, latestVersion });
+      const skippedVersion = getSkippedVersion(ctx);
+      if (skippedVersion && skippedVersion === normalizeVersionString(latestVersion)) {
+        return;
+      }
+
+      if (skippedVersion && compareSemver(latestVersion, skippedVersion) > 0) {
+        clearSkippedVersion(ctx);
+      }
+
+      await promptAndMaybeUpdate({ currentVersion, latestVersion, ctx });
     }
   } finally {
     STATE.checked = true;
